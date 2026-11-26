@@ -1,0 +1,65 @@
+# 洛雪原装 v1.9.2 + 中心取音源 · GitHub Actions 出包
+# 用法：网页打开 .github/workflows/build-apk.yml，整篇替换成本文件内容，保存后手动 Run workflow。
+# ★ 全流程只有出包：没有任何自检/对账/单测步骤会在编译前把 run 判红。
+name: build-musiccloud-apk
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出本补丁包
+        uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 克隆洛雪原装 v1.9.2 并打补丁
+        run: |
+          git clone --depth 1 --branch v1.9.2 https://github.com/lyswhut/lx-music-mobile.git upstream
+          chmod +x apply.sh
+          ./apply.sh "$PWD/upstream"
+          echo "--- 原装文件改动确认（应为 1 个文件、2 行）---"
+          cd upstream && git diff --stat src/core/init/index.ts
+          cd "$GITHUB_WORKSPACE"
+          echo "--- 改包名 / 版本：com.musiccloud.app / 1.0 ---"
+          node rename-package.mjs "$PWD/upstream"
+
+      - name: 安装依赖
+        working-directory: upstream
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: 编译 release APK
+        working-directory: upstream/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: 收拢产物
+        run: |
+          mkdir -p out
+          D=upstream/android/app/build/outputs/apk/release
+          CAND=$(find "$D" -maxdepth 1 -type f -name '*.apk' ! -name '*-unsigned.apk' 2>/dev/null | sort || true)
+          APK=$(printf '%s\n' "$CAND" | grep -- '-universal\.apk$' | head -1 || true)
+          [ -z "$APK" ] && APK=$(printf '%s\n' "$CAND" | grep -v '^$' | head -1 || true)
+          if [ -z "$APK" ]; then echo "✗ 没找到 APK"; ls -la "$D"; exit 1; fi
+          echo "选用：$APK"
+          cp "$APK" out/musiccloud-1.0.apk
+          ls -lh out/
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: musiccloud-1.0-apk
+          path: out/musiccloud-1.0.apk
+          if-no-files-found: error

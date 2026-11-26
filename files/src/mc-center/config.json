@@ -1,0 +1,7 @@
+{
+  "centerBaseUrl": "http://192.168.88.9:7575",
+  "deviceId": "",
+  "token": "",
+  "intervalSec": 300,
+  "requestTimeoutMs": 15000
+}

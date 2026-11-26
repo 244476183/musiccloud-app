@@ -1,0 +1,92 @@
+{
+  "version": "原装+中心取源 定稿v1 · 包名 com.musiccloud.app / 版本 1.0 重定基线 · v26 CI 编译修复（Java 包名同步迁移）",
+  "date": "2026-11-24",
+  "upstream": {
+    "repo": "https://github.com/lyswhut/lx-music-mobile.git",
+    "tag": "v1.9.2",
+    "head": "0669d1b6d419967822ff52ec06e50b9613bfd136",
+    "fileCount": 751
+  },
+  "server": {
+    "note": "musiccloud-admin-1.4-纯货架/server.js · 冻结不改一行（不在本仓库内）",
+    "sha256": "4c8ffe0ddb60002e19597c85eea4a8367d7099c42991b5ca86af20f2a34f50f5"
+  },
+  "applyFreezeMarker": "# 🔒 冻结区结束",
+  "frozenApplySha256": "bbeb2f763b7e51fe70ad677d6df228ffd5ce50eb8b5a27ad6640d496c17d5dc6",
+  "frozenFiles": {
+    "patch.mjs": "b2610ce2bf5212d783248d232f41414cd472d7e6f86cf5c0040e8e7976e392b5",
+    "files/src/mc-center/index.ts": "caabb37d51bc969d9fa52095215f9ff7f3bada809fda7752a93e47416ddf94a9",
+    "files/src/mc-center/README.md": "8e92ef85906b5829a01419f2b195322e4b0c1bd4497c2c053a5a251c2b803b48",
+    "build-apk.yml": "72614d8bf49fb1df13d8d1359a04da88eff3e59cad4c2dfd7462e8ad5b57a739",
+    "本地检查.mjs": "e6be5338081d003a9644b735f224c0adf56e86dffb60ca2ae340cba1459ffdfc",
+    "rename-package.mjs": "10017a5d4d09f51c4bae807f9ab5f03953ddf7ee46bdb4a59cad4f22a599162d"
+  },
+  "guardFiles": {
+    "check-freeze.mjs": "02e0b6c934cec4166c595a1ad321ce4fcbb47fbf98cde3f824b26eef9e41a5e0"
+  },
+  "configKeys": {
+    "centerBaseUrl": "string",
+    "deviceId": "string",
+    "token": "string",
+    "intervalSec": "number",
+    "requestTimeoutMs": "number"
+  },
+  "originInitSha256": "0b267941892ce5e8c9d6630d91b9c6aa1be29c672cc21e7fe84eb80e16610a9c",
+  "patchedInitSha256": "a323c6e6153d261c3e9fade88eb0f9f0c2dbd4cfb617af2fd7ace24c9089ff9b",
+  "manifestBaselineSha256": "fbcd4f0ff8fca29bd2f0b8669ab9cff0c7e63e8abb50d3542e9ec037f3e1096c",
+  "manifestNormalizedSha256": "d799514e37e879d3473018d8efc0ff1b6cb99800b70043c86b9793c9b302bb8c",
+  "documentFiles": [
+    "README.md",
+    "定稿封印.md",
+    "中心取源配置说明.md",
+    "原装改动清单.md",
+    "服务端核查报告.md"
+  ],
+  "uiAllow": [
+    "src/screens/",
+    "src/components/",
+    "src/theme/",
+    "android/app/src/main/res/drawable/",
+    "android/app/src/main/res/values/strings.xml",
+    "app.json",
+    "android/app/src/main/AndroidManifest.xml",
+    "permissions.json",
+    "android/app/src/main/res/mipmap-"
+  ],
+  "uiDeny": [
+    "src/core/",
+    "src/plugins/",
+    "src/utils/",
+    "src/store/",
+    "src/mc-center/",
+    "src/app.ts",
+    "index.js",
+    "package.json",
+    "android/app/build.gradle",
+    "android/app/src/main/res/xml/network_security_config.xml",
+    "android/keystore.properties",
+    "android/app/debug.keystore"
+  ],
+  "permissionAllow": [
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+  ],
+  "permissionDeny": [
+    "android.permission.INTERNET",
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.ACCESS_WIFI_STATE",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android:networkSecurityConfig",
+    "android:usesCleartextTraffic",
+    "applicationId"
+  ],
+  "package": {
+    "applicationId": "com.musiccloud.app",
+    "version": "1.0",
+    "versionCode": 1,
+    "note": "由 rename-package.mjs 在 CI 内作用于上游；本仓库 apply.sh / patch.mjs / check-freeze.mjs / overrides / mc-center / 主链六步逐字节不动"
+  }
+}
