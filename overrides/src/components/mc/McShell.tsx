@@ -101,6 +101,36 @@ function Shell({ original }: { original: ReactNode }) {
   const tabRef = useRef<TabKey>('reco')
   tabRef.current = tab
   /**
+   * ★ v27 · 错误条三修（真机截图：推荐页常驻一条「换源失败」）
+   *   ① 切页清：changeTab 调 clearErr()，切回推荐不再冒出刷歌页的旧错误。
+   *   ② 自动消失：2.6s（与刷歌页 showMsg 同口径），不再只能靠手点或下次播放清。
+   *   ③ 文案我方口径：原装 toggle_source_failed 让「去搜索页指定其他来源」，
+   *      而我方定制 UI 没有原装音源切换器，照这句话做不到 —— 换成讲人话、
+   *      且我方真能做到的提示；未知错误保留原文，不抹掉排障信息。
+   *   另加「跨页迟到隔离」：errOwner 记录这笔播放属于哪个 Tab，异步取链失败
+   *   落地时若当前 Tab 已不是它，就不写红条。这是 ① 能真正生效的关键，
+   *   否则「刷歌失败 → 请求迟到 → 用户已在推荐页」仍会闪一条。
+   */
+  const errTimer = useRef<any>(null)
+  const clearErr = () => {
+    if (errTimer.current) { clearTimeout(errTimer.current); errTimer.current = null }
+    setErr('')
+  }
+  useEffect(() => () => { if (errTimer.current) clearTimeout(errTimer.current) }, [])
+  const FRIENDLY_SOURCE_ERR = '这首暂时没找到可播音源，换一首试试'
+  const friendlyErr = (e: any): string => {
+    const m = String(e?.message || e || '')
+    return /换源失败|指定其他来源|變更來源失敗|变更来源失败|Failed to change the source|音源未返回可播直链/.test(m)
+      ? FRIENDLY_SOURCE_ERR
+      : m
+  }
+  const showErr = (e: any, errOwner: TabKey) => {
+    if (tabRef.current !== errOwner) return
+    if (errTimer.current) clearTimeout(errTimer.current)
+    setErr(friendlyErr(e))
+    errTimer.current = setTimeout(() => { errTimer.current = null; setErr('') }, 2600)
+  }
+  /**
    * ★ 深度自查 P0-A：「刷歌已接管、但 swap 新歌尚未落地」的窗口。
    *   置起 = changeTab 切进刷歌；清除 = playSwipe 落地 / 切走刷歌。
    *   用于让 reco/mine 的在途播放落地后补一次暂停，避免两首叠着响。
@@ -174,9 +204,9 @@ function Shell({ original }: { original: ReactNode }) {
   }, [])
 
   type PlayResult = { ok: boolean, latest: boolean }
-  const play = async(tr: SheetTrack, modeOff = false): Promise<PlayResult> => {
+  const play = async(tr: SheetTrack, modeOff = false, errOwner: TabKey = 'reco'): Promise<PlayResult> => {
     const seq = ++playSeqRef.current
-    setErr('')
+    clearErr()
     /** ★ K / v19 硬坑②：RepeatMode 是全局状态，切页不复位会污染刷歌。
      *  ★ v24 修复 E：刷歌路径必须跳过 applyMode —— changeTab 刚 forceRepeatOff()，
      *    若这里再按 playMode='loop' 设回 Track，刷歌页就会单曲循环、滑歌串音。 */
@@ -203,8 +233,9 @@ function Shell({ original }: { original: ReactNode }) {
       return { ok, latest }
     } catch (e: any) {
       const latest = seq === playSeqRef.current
-      /** ★ v24：被抢占的旧请求连错误条都不该写，否则刷出一笔过期错误。 */
-      if (latest) { setErr(String(e?.message || e)); playQueue.restore() }
+      /** ★ v24：被抢占的旧请求连错误条都不该写，否则刷出一笔过期错误。
+       *  ★ v27：再叠一层来源 Tab 隔离 + 我方文案 + 自动消失。 */
+      if (latest) { showErr(e, errOwner); playQueue.restore() }
       return { ok: false, latest }
     }
   }
@@ -223,7 +254,8 @@ function Shell({ original }: { original: ReactNode }) {
      *  只调既有 safePause（吞 reject），不碰 playTrack / 取链六步；
      *  新歌落地 setPlay() 自然恢复。取链失败则恢复旧歌，不留静音（D-4 A）。 */
     safePause()
-    const { ok, latest } = await play(tr, true)   // ★ E：刷歌路径强制 RepeatMode.Off
+    /** ★ v27：来源标成 swipe，取链失败迟到也不在推荐页写红条。 */
+    const { ok, latest } = await play(tr, true, 'swipe')   // ★ E：刷歌路径强制 RepeatMode.Off
     /** ★ v24 修复 D：被更新的切歌抢占的旧请求，不做任何兜底 —— 它若 doResume()
      *  会把上一首旧歌恢复，而画面已是最新那首。最新那笔自己会管出声/恢复。 */
     if (!latest) return
@@ -239,18 +271,19 @@ function Shell({ original }: { original: ReactNode }) {
    *   不碰 playTrack / 取链六步；在推荐页点歌后切到「我的」不受影响（标记已清）。
    */
   const playOther = async(tr: SheetTrack) => {
-    await play(tr)
+    await play(tr, false, tabRef.current)
     if (swipeTakeoverRef.current) safePause()
   }
 
   /** ★ 十一期：卡片 ▶ / 浮层「播放全部」→ 原装 tempPlayList 逐首续播。
    *   同样补一层接管守卫：批次首曲在途时切进刷歌，落地后不串音。 */
   const playBatchOther = (tracks: SheetTrack[], shuffle: boolean) => {
-    setErr('')
+    clearErr()
+    const errOwner = tabRef.current          // ★ v27：捕获发起时的 Tab，异步失败不串页
     applyMode()                              // ★ K：批次入口同样按模式复位
     void playBatchUpstream(tracks.map(toMCTrack), shuffle)
       .then(() => { if (swipeTakeoverRef.current) safePause() })
-      .catch(e => setErr(String(e?.message || e)))
+      .catch(e => showErr(e, errOwner))
   }
   const onToggle = () => { if (player.playing) safePause(); else void doResume() }
   const onSeek = (r: number) => { void seekToRatio(r).catch(() => {}) }
@@ -342,6 +375,8 @@ function Shell({ original }: { original: ReactNode }) {
    *     playSwipe 另有一层「落地后已离开刷歌页就补暂停」的守卫，两者不冲突。
    */
   const changeTab = (k: TabKey) => {
+    /** ★ v27①：切页即清红条（连同自动消失定时器），旧失败不带到新页面。 */
+    if (k !== tab) clearErr()
     if (tab === 'swipe' && k !== 'swipe') {
       if (player.playing) safePause()
       swipeTakeoverRef.current = false          // 切走刷歌：接管窗口结束
@@ -394,10 +429,10 @@ function Shell({ original }: { original: ReactNode }) {
           <Text style={s.statusTxt}>音源初始化中 / 未就绪 · 可在「我的 → 全链路检查」查看状态</Text>
         </TouchableOpacity>
       ) : null}
-      {/* ★ P2-H：刷歌页自身错误走 SwipeScreen 的 showMsg，不经 McShell err；
-          在途的 reco 播放失败时不把错误条盖到刷歌页上。 */}
+      {/* ★ P2-H：刷歌页自身错误不经 McShell err（v27 再用 errOwner 做来源隔离）；
+          ★ v27：2.6s 自动消失、切页即清、文案走我方口径、点一下也能关。 */}
       {err && tab !== 'swipe' ? (
-        <TouchableOpacity style={s.errBar} onPress={() => setErr('')}>
+        <TouchableOpacity style={s.errBar} onPress={clearErr}>
           <Text style={s.errTxt} numberOfLines={2}>{err}</Text>
         </TouchableOpacity>
       ) : null}
