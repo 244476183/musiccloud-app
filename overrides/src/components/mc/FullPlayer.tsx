@@ -6,11 +6,9 @@
  *   （F-13 头号嫌疑）。歌词常驻，不用再点「♪ 歌词」。
  *
  * F-01：进度条真可拖。按住只改本地 dragR、不读播放器、不重绘整页；松手才 onSeek 一次。
- * F-02：⏮ / ⏭ 只放本页（刷歌页按 F-07 永不加）。直连原装 playPrev/playNext；
- *   ★ 三个坑全部防住：
- *     ① 批次末首手动 playNext 会被原装强制成 listLoop 回卷 → 无队列/无 listId 时置灰；
- *     ② 刷歌在播时 McShell 传 canSkip=false → 置灰，不绕过刷歌 sessionQueue；
- *     ③ 第一首且无 playedList 时 playPrev 会直接停播 → 置灰而非让它关掉音乐。
+ * F-02 / v23-H / v23-K：⏮ / ⏭ 只放本页（刷歌页按 F-07 永不加）。
+ *   不调原装 playPrev（我方 listId 恒 null 会直接停播），统一走 playQueue + McShell.play()。
+ *   批次态上一首置灰；单曲态由 playQueue 提供上下首；顺序/循环用原生 RepeatMode。
  * 歌词：D-1 A 自绘，只读 playerState.musicInfo.lrc（fillMeta 的 stillCurrent 已校验属于当前曲目），
  *   不渲染原装 Lyric → 深色沉浸底不与「原装主题黑字」打架，也避开 RNN 上下文依赖。
  *
@@ -434,7 +432,7 @@ export default ({ visible, onClose, t, track, playing, position, duration,
       <View style={s.safe} />
 
       {/* ★ K：队列抽屉 —— FullPlayer 内部一层 absoluteFill View + translateY 滑入，
-          0 新增 Modal（MineScreen 已有 Sheet + FullModal 两个挂载点，不再加第三个）。
+          0 新增 Modal（MineScreen 只有 FullModal 一个挂载点，不再加第二个）。
           不加下滑手势（会与 SeekBar 的 PanResponder 抢），返回键 / 关闭按钮收起。 */}
       {queueOpen ? (
         <Animated.View style={[s.drawer, {
@@ -504,7 +502,6 @@ const makeStyles = (t: Tokens) => StyleSheet.create({
   sideBtn: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
   skipBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   skipOff: { opacity: 0.32 },
-  skipTxt: { color: '#FFFFFF', fontSize: 22 },
   bigPlay: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#FFFFFF',
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 14, elevation: 6 },

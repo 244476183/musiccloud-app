@@ -4,7 +4,7 @@
  * ★ P2「彻底去除洛雪原版 UI」：运行时不再渲染原装首页内容、不再提供原装入口。
  *   RNN 只注册 Home（已被本壳接管）/ PlayDetail / SonglistDetail / Comment / 三个 Modal，
  *   用户全程看不到原版界面。替代入口全部在本壳内：
- *     · 全部设置项（含自定义音源勾选）→「我的」页连点头像 5 次进原装设置
+ *     · 自定义音源勾选 →「我的」页最底部极淡小字连点 5 次（最后退路）
  *     · 歌词 → F-14 全屏单曲页常驻（自绘，不再用原装 Lyric / Secondary FullModal）
  *   物理删除文件 / 改导航注册要动 src/app.ts（uiDeny）与 init 主链，风险最高、收益为零，
  *   本轮不做 —— 因此**零破封**。`original` 只保留参数签名兼容 GateHost，绝不渲染。
@@ -33,6 +33,11 @@ import {
 import RecoScreen from '@/screens/mc-ui/RecoScreen'
 import SwipeScreen from '@/screens/mc-ui/SwipeScreen'
 import MineScreen from '@/screens/mc-ui/MineScreen'
+/* ★ v32 / P：模块顶层副作用 —— bundle 求值期就订阅 list_changed，早于 core/init 的
+   setUserApiList / setApiSource，永久压制音源「发现新版本」弹窗（服务端重导也不复活）。
+   ESM 只求值一次，幂等；upstream / mc-center / 取链六步一字不动。 */
+import './sourceUpdateGuard'
+import { resetVolumeIfNeeded } from './volumeGuard'
 
 const toMCTrack = (tr: SheetTrack): MCTrack => ({
   id: tr.id,
@@ -117,6 +122,10 @@ function Shell({ original }: { original: ReactNode }) {
     setErr('')
   }
   useEffect(() => () => { if (errTimer.current) clearTimeout(errTimer.current) }, [])
+  /** ★ v32 / R：设置页收成只剩自定义源后，原装音量滑块已无 UI 入口；
+   *  若早期被拖小并持久化，用户调不回来。挂载时（init 已读完设置）复位一次，
+   *  默认 1 时零写入、零事件、零播放器调用。 */
+  useEffect(() => { resetVolumeIfNeeded() }, [])
   const FRIENDLY_SOURCE_ERR = '这首暂时没找到可播音源，换一首试试'
   const friendlyErr = (e: any): string => {
     const m = String(e?.message || e || '')
@@ -391,8 +400,8 @@ function Shell({ original }: { original: ReactNode }) {
   }
 
   // ★ 三期拍板「顶栏全删」：字标条 / 刷新 / 菜单全部不渲染。
-  //   原菜单功能已迁移：深浅色 → TabBar 月亮；歌词 → 播放浮层 / 刷歌档位浮层；
-  //   全部设置项 → 我的页头像连点 5 次；全链路检查 → 我的页底部按钮。
+  //   原菜单功能已迁移：深浅色 → TabBar 月亮；歌词 → 全屏单曲页常驻；
+  //   选源退路 → 我的页最底部极淡小字（连点 5 次），不再提供诊断入口。
   const topInset = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0
 
   return (
@@ -426,7 +435,7 @@ function Shell({ original }: { original: ReactNode }) {
       ) : null}
       {ready === false && tab !== 'swipe' ? (
         <TouchableOpacity style={s.status} onPress={() => changeTab('mine')} activeOpacity={0.85}>
-          <Text style={s.statusTxt}>音源初始化中 / 未就绪 · 可在「我的 → 全链路检查」查看状态</Text>
+          <Text style={s.statusTxt}>音源初始化中 / 未就绪 · 请稍候或检查中心连接</Text>
         </TouchableOpacity>
       ) : null}
       {/* ★ P2-H：刷歌页自身错误不经 McShell err（v27 再用 errOwner 做来源隔离）；
@@ -487,14 +496,6 @@ const styles = (t: Tokens) => StyleSheet.create({
   errTxt: { color: t.red, fontSize: 13 },
   themeHint: { backgroundColor: 'rgba(109,94,252,0.94)', paddingVertical: 9, paddingHorizontal: 14 },
   themeHintTxt: { color: '#FFF', fontSize: 12, textAlign: 'center' },
-  noLrc: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 30 },
-  noLrcTitle: { color: '#15182C', fontSize: 19, fontWeight: '800' },
-  noLrcSub: { color: '#8A90A8', fontSize: 13, lineHeight: 20, textAlign: 'center', marginTop: 10 },
-  menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F1F3F9' },
-  menuTxt: { color: '#15182C', fontSize: 15, fontWeight: '600' },
-  menuArrow: { color: '#98A0BA', fontSize: 18 },
-  menuNote: { color: '#8A90A8', fontSize: 12, lineHeight: 19, marginTop: 16 },
 })
 
 /* F-13：错误边界包在主壳外层，渲染期异常不再直接闪退；全局兜底在 componentDidMount 安装。 */

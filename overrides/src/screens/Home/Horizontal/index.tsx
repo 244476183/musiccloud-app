@@ -5,7 +5,7 @@
  *
  * 结构照搬原装 Horizontal/index.tsx，仅去掉末尾的 <PlayerBar />：
  * 播放条由 McShell 统一渲染一份，避免双播放条。
- * Aside 保留 → 原装「设置 → 自定义音源」入口在横屏下同样可达。
+ * original 仅作签名兼容，McShell 运行时不渲染（横竖屏统一走定制三页）。
  */
 import { View } from 'react-native'
 import Aside from './Aside'

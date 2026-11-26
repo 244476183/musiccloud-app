@@ -36,11 +36,6 @@ export type SheetTrack = {
   raw?: any
 }
 
-const fmt = (n: number) => {
-  const v = Math.max(0, Math.floor(Number(n) || 0))
-  return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`
-}
-
 /* ══ 1. 几何封面：截图里每张列表封面都是这个样式 ══ */
 export function Cover({ uri, title, artist, size = 48, radius = 10, t, style }: {
   uri?: string; title?: string; artist?: string; size?: number; radius?: number; t: Tokens; style?: any
@@ -583,9 +578,8 @@ export function StatBar({ t, label, value }: { t: Tokens; label: string; value: 
    自 F-14 全屏单曲页起零调用，整块删除；全局进度条现在只有 FullPlayer.SeekBar 一处实现，
    全屏页与刷歌页共用。 */
 
-/* ══ 14. 全屏容器：给「设置」「歌词」这类原装组件用 ══
-   原装设置页 / 歌词页都是 FlatList（flex:1），不能塞进 Sheet 的 ScrollView（会嵌套滚动）。
-   单独全屏 Modal，白底，带一条返回条；不注册 RNN screen、不改导航注册。 */
+/* ══ 14. 全屏容器：当前只挂「自定义源」精简选源页 ══
+   独立全屏 Modal，白底，带一条返回条；不注册 RNN screen、不改导航注册。 */
 export function FullModal({ visible, title, onClose, children, t }: {
   visible: boolean; title: string; onClose: () => void; children: React.ReactNode; t?: Tokens
 }) {
@@ -608,8 +602,8 @@ export function FullModal({ visible, title, onClose, children, t }: {
  * ★ 十期二轮②（回退本轮 P2-25 的过度改动）：
  *   首轮把「顶栏跟随主题」而 body 保留白底 → 深色主题下变成**半深半白**，
  *   比原来整页白更割裂，反而违背九期「全屏沉浸」。
- *   且 FullModal 里是原装设置 / 原装歌词，它们读**原装 theme 变量**（不跟我们的 mode 同步），
- *   容器跟着变深会出现「黑字黑底」不可读。
+ *   且 FullModal 内是复用原装 CheckBox / Text 的选源列表，它们读**原装 theme 变量**
+ *   （不跟我们的 mode 同步），容器跟着变深会出现「黑字黑底」不可读。
  *   结论：整页统一白底最稳；只让返回按钮取主题色保持品牌感，并记录为已知取舍。
  */
 const makeFullModalStyles = (t?: Tokens) => StyleSheet.create({
@@ -655,7 +649,6 @@ const baseStyles = (t: Tokens) => StyleSheet.create({
   miniPrev: { width: 34, height: 34, borderRadius: 17, backgroundColor: t.chipOff,
     alignItems: 'center', justifyContent: 'center' },
   miniNextOff: { opacity: 0.34 },
-  miniNextTxt: { color: t.brand, fontSize: 15, fontWeight: '700' },
   /* ★ 五期自查⑥：数字卡 / 工具格组件已删，对应 8 条死样式一并清掉（减少代码量） */
   /* big entry */
   /* ★ F-11：宽度交给外层横滑 item 控制（酷狗形态：窄竖卡同行横滑），

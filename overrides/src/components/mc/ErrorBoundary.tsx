@@ -3,16 +3,16 @@
  *
  * 如实边界：本环境没有 Logcat / 崩溃栈，这一层**不修根因**，只做两件事：
  *   ① 让渲染期异常不再直接闪退，给一条可见的「出错了 · 点此重载」；
- *   ② 把最近一条错误栈落盘，下次闪退后可在「我的 → 连点头像 5 次 → 原装设置 → 错误日志」
- *      或本地存储里取证，定位就有证据，不用再靠猜。
+ *   ② 把最近一条错误栈落盘（mc.last.error.v1），崩溃页同时直显详情；
+ *      取证靠页面截图或本地存储，不再依赖任何设置入口。
  *
  * 原装本来就有全局 JS / 原生异常捕获（utils/errorHandle.ts → app.ts），
  * 这里只补 React 渲染边界与未捕获 Promise，且**链式调回原 handler**，不破坏红屏与上报。
  * 全部在 components/mc 内，不改 index.js / app.ts / 任何冻结文件 → 0 破封。
  */
-import React, { useEffect } from 'react'
+import React from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native'
-import { getData, saveData } from '@/plugins/storage'
+import { saveData } from '@/plugins/storage'
 
 const KEY = 'mc.last.error.v1'
 
@@ -66,13 +66,13 @@ export default class ErrorBoundary extends React.Component<Props, State> {
     if (!this.state.err) return this.props.children
     const e: any = this.state.err
     /** ★ v8：崩溃详情直接显示在页面上 —— 无 Logcat 时，用户一崩截图即可精确定位，
-        不必再去「设置 → 错误日志」翻。只展示 message + stack 首行，不刷屏。 */
+        不必再翻找任何设置入口。只展示 message + stack 首行，不刷屏。 */
     const msg = String(e?.message ?? e ?? '未知错误')
     const first = String(e?.stack ?? '').split('\n').slice(0, 2).join('\n')
     return (
       <View style={s.root}>
         <Text style={s.title}>出了点问题</Text>
-        <Text style={s.sub}>错误已记录，可在设置 → 错误日志里查看</Text>
+        <Text style={s.sub}>错误详情已显示在下方，截图即可反馈</Text>
         <Text style={s.detail} selectable numberOfLines={5}>{msg}{first ? '\n' + first : ''}</Text>
         <TouchableOpacity style={s.btn} onPress={this.reload} activeOpacity={0.88}>
           <Text style={s.btnTxt}>点此重载</Text>

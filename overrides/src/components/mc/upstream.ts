@@ -337,7 +337,7 @@ export const seekToRatio = async(r: number): Promise<void> => {
   if (duration > 0) await setCurrentTime(Math.max(0, Math.min(1, r)) * duration)
 }
 
-/* ── 收藏：直接读写原装「我喜欢的音乐」，与原装设置页互通 ── */
+/* ── 收藏：直接读写原装「我喜欢的音乐」列表数据（与原装数据互通） ── */
 
 /**
  * ★ 十一期真 bug 修复（喜欢按钮永远取消不了）：

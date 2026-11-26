@@ -35,7 +35,6 @@ let sessionMode: Mode = 'balanced'
 let sessionQuery = ''
 let sessionResults: SheetTrack[] | null = null
 let sessionList: SheetTrack[] = []
-let sessionOne: SheetTrack | null = null
 /** ★ 十期第二轮自查：切 Tab 重挂载时 useEffect 会再跑一次 refresh → 曲库展示列表又换一批。
  *  用模块级 key 记住「上次取的是哪个 mode/rev/tick」，重挂载且 key 未变就直接沿用会话列表。 */
 let lastRefreshKey = ''
@@ -96,7 +95,6 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
   const s = useMemo(() => makeStyles(t), [t])
   const [mode, setModeRaw] = useState<Mode>(sessionMode)
   const [list, setList] = useState<SheetTrack[]>(sessionList)
-  const [one, setOne] = useState<SheetTrack | null>(sessionOne)
   const [query, setQuery] = useState(sessionQuery)
   const [results, setResults] = useState<SheetTrack[] | null>(sessionResults)
   const [busy, setBusy] = useState(false)
@@ -139,8 +137,7 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
       let ts = await pick(m, 8)
       if (!ts.length) { await bootstrap(); ts = await pick(m, 8) }
       sessionList = ts.map(toSheet)
-      sessionOne = ts.length ? toSheet(ts[0]) : null
-      setList(sessionList); setOne(sessionOne)
+      setList(sessionList)
       setSt(stats())
     } catch (e: any) { showMsg(String(e?.message || e)) }
     finally { setBusy(false) }
@@ -433,8 +430,6 @@ const makeStyles = (t: Tokens) => StyleSheet.create({
     borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16,
     shadowColor: '#000', shadowOpacity: 0.24, shadowRadius: 14, elevation: 8 },
   snackTxt: { color: '#FFF', fontSize: 13, fontWeight: '700', textAlign: 'center', lineHeight: 19 },
-  row2: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 },
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   /* ★ 本轮：全部固定位置，尺寸/圆角/字阶统一收紧（不再横滑、不再过大） */
   bigRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
   bigItem: { flex: 1, minWidth: 0 },
@@ -459,5 +454,4 @@ const makeStyles = (t: Tokens) => StyleSheet.create({
   sheetModeLabel: { color: '#22B87A', fontSize: 14, fontWeight: '700' },
   empty: { color: t.dim, fontSize: 14, textAlign: 'center', paddingVertical: 26 },
   /* ★ 六期自查④：旧引导按钮已删，对应两条死样式清掉 */
-  note: { color: t.dim, fontSize: 11, lineHeight: 17, marginTop: 14 },
 })

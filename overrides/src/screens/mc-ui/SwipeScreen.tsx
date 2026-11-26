@@ -124,6 +124,10 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
   const [queue, setQueue] = useState<SheetTrack[]>([])
   const [idx, setIdx] = useState(0)
   const [msg, setMsg] = useState('')
+  /** ★ v30 / M：档位浮层专用反馈。Sheet 是原生 Modal（底层 msg 完全盖不住），
+   *  而共享 msg 被 fill 链 / 切歌 / 缓存等 8 处写入竞争 → v29 直接绑上去会「一闪而过」。
+   *  照推荐页 sheetToast 的写法独立成一条状态，与业务提示彻底隔离。 */
+  const [modeToast, setModeToast] = useState('')
   const [modeOpen, setModeOpen] = useState(false)
   const [fav, setFav] = useState(false)
   /** ★ 十一期：缓存状态持久化到按钮（不再只是 2.6 秒一次性反馈） */
@@ -136,6 +140,8 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
   const toastFade = useRef(new Animated.Value(0)).current
   const cacheTimer = useRef<any>(null)
   const msgTimer = useRef<any>(null)
+  /** ★ M：档位浮层专用定时器，与 msgTimer 各自独立、互不 clear。 */
+  const modeToastTimer = useRef<any>(null)
   /** ★ 十一期深度自查：队尾自动补货 / 缓存按钮的「进行中」一次性标志。 */
   const appendingRef = useRef(false)
   const cachingRef = useRef(false)
@@ -152,6 +158,7 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
     pan.stopAnimation()
     if (cacheTimer.current) clearTimeout(cacheTimer.current)
     if (msgTimer.current) clearTimeout(msgTimer.current)
+    if (modeToastTimer.current) clearTimeout(modeToastTimer.current)
     if (lockTimer.current) clearTimeout(lockTimer.current)
     toastFade.stopAnimation()
   }, [pan, toastFade])
@@ -165,6 +172,20 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
     setMsg(text)
     if (msgTimer.current) clearTimeout(msgTimer.current)
     msgTimer.current = setTimeout(() => setMsg(''), 2600)
+  }
+  /** ★ v30 / M：独立通道，只服务档位浮层 toast。
+   *  fill 链的补货提示、[cur?.id] 的切歌清 msg、缓存按钮的 setMsg('') 都碰不到它，
+   *  因此「已切换到 · DJ」能稳定留满 2.6 秒，不会一闪而过。 */
+  const showModeToast = (text: string) => {
+    setModeToast(text)
+    if (modeToastTimer.current) clearTimeout(modeToastTimer.current)
+    modeToastTimer.current = setTimeout(() => setModeToast(''), 2600)
+  }
+  /** ★ M：关闭浮层时把专用提示与定时器一起收干净，重开不会看到上一条残留。 */
+  const closeModeSheet = () => {
+    setModeOpen(false)
+    setModeToast('')
+    if (modeToastTimer.current) { clearTimeout(modeToastTimer.current); modeToastTimer.current = null }
   }
 
   /** 队列写入统一走这里，保证 React state 与模块级会话状态同步。 */
@@ -215,7 +236,7 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
        *   不碰 catalog.ts（D-5 A），pickFresh 仍是既有选题口径。
        */
       if (swap) {
-        if (!list.length) { setMsg('曲库正在自动补货，稍等一下'); return }
+        if (!list.length) { showMsg('曲库正在自动补货，稍等一下'); return }
         record(list)
         commit(list, 0)
         sessionMode = m
@@ -286,7 +307,7 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
         record(list)
         commit(list, 0)
       }
-      if (!list.length) setMsg('曲库正在自动补货，稍等一下')
+      if (!list.length) showMsg('曲库正在自动补货，稍等一下')
     } catch (e: any) { showMsg(String(e?.message || e)) }
   }
   /** 所有调用点统一走这里：排队执行，避免并发写 sessionQueue。 */
@@ -640,30 +661,29 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
 
       {/* 档位浮层：★ 十一期删掉「播放页 / 歌词」按钮，只留 4 档 + 真换一批 */}
       <Sheet visible={modeOpen} title="选择档位" badge="4 档 · 同一曲库"
-        subtitle="只调权重，不重载音源、不打断播放" onClose={() => setModeOpen(false)} t={t}
-        toast={msg || undefined}>
+        subtitle="只调权重，不重载音源、不打断播放" onClose={closeModeSheet} t={t}
+        toast={modeToast || undefined}>
         <View style={s.chips}>
           {MODES.map(m => (
             <Chip key={m.key} label={m.label} on={mode === m.key} t={t}
               onPress={() => {
-                /** v29：选档位有时零反馈的真因 —— Sheet 是原生 Modal（独立窗口），
-                 *  旧版点完立刻 setModeOpen(false) 却把反馈写到底层页 msg，
-                 *  Modal 退场动画期间整窗盖住 → 底层条看不见，而 2600ms 定时器
-                 *  已从点击那一刻跑掉；再叠 fill 排队 / refreshTick 覆盖，时有时无。
-                 *  修：不再立刻关浮层 → 反馈走 <Sheet toast>（Modal 内可见），
-                 *  Chip 的 on 选中态也终于看得见；浮层由 ✕ / 遮罩 / 换一批关闭。
-                 *  复用现成 showMsg 的 2600ms 定时器清 msg（toast 随之消失），
-                 *  零新增 state / 定时器 / 组件。「换一批」是异步 fill 完成后才弹，
-                 *  彼时浮层早已移除、底层 msg 可见，不受影响，不动它。 */
+                /** v29：选档位有时零反馈 —— Sheet 是原生 Modal，点完立刻关浮层
+                 *  却把反馈写到底层页 msg，退场期间整窗盖住，时有时无。
+                 *  v29 改为「不立刻关 + 反馈走 <Sheet toast>」，选中态也看得见。
+                 *  ★ v30 / M：v29 直接把 <Sheet toast> 绑到共享 msg，而 msg 被
+                 *  fill 链补货提示、[cur?.id] 切歌清 msg、缓存按钮等 8 处写入竞争，
+                 *  2.6 秒定时器到期前就被清空/覆盖 → 提示「一闪而过」。
+                 *  现改走独立 modeToast（自带定时器 + 关闭/卸载清理），彻底隔离。
+                 *  底层 msg 悬浮条仍负责换一批 / 缓存 / 错误等业务提示，互不影响。 */
                 setMode(m.key)
-                showMsg(mode === m.key ? '当前档位 · ' + m.label : '已切换到 · ' + m.label)
+                showModeToast(mode === m.key ? '当前档位 · ' + m.label : '已切换到 · ' + m.label)
               }} />
           ))}
         </View>
         <SheetButton t={t} label="换一批" onPress={() => {
           forceFill = true
           sessionRev += 1; setRev(sessionRev)
-          setModeOpen(false)
+          closeModeSheet()
         }} />
         <View style={{ height: 18 }} />
       </Sheet>
