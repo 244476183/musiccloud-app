@@ -212,7 +212,8 @@ export const pick = async(mode: Mode, n = 8): Promise<Track[]> => {
  * ★ 十一期「1 天内不重复」：供刷歌页专用。
  *   - 先从**全池**按档位排序里挑「当日没出现过」（id 或归一化键都没命中）的；
  *   - 同批内也按归一化键去重，避免跨音源同曲一次刷出两遍；
- *   - 候选不足（池子当天全刷过）时按 oldestFirst 顺序**允许复用最旧**，
+ *   - 候选不足（池子当天全刷过）时**按档位排序**优先复用今天出现过的
+ *     （v28：不再按最早出现顺序，否则切档会被「最旧的普通歌」占满而失效），
  *     再不够就按排序补齐 —— 保证队列永远补得满，绝不出现「刷不动 / 空列表」。
  *   - 不读历史文件、不建定时器、不改通用 pick()（推荐页/浮层/搜索不受影响）。
  */
@@ -239,12 +240,17 @@ export const pickFresh = async(
     if (seenIds.has(t.id) || seenKeys.has(normKey(t))) continue
     push(t)
   }
-  // ② 容量回退：按当日出现顺序，优先复用最旧的
+  // ② 容量回退：★ v28 档位失效修复 —— 旧版按 oldestFirst（当天最早出现顺序）补满，
+  //    DJ 歌早已被 record() 记入台账，① 严格段把它们全排除后，② 一口气把「最旧的
+  //    普通歌」补满 n，③ 永不执行 → 4 档返回同一批，切档看着毫无效果。
+  //    改为：仍只复用「今天出现过」的（1 天内不重复口径不退化），但按 candidates
+  //    （档位排序）顺序取 —— DJ 档优先复用 DJ 歌，熟悉/尝鲜按各自权重复用。
   if (out.length < n) {
-    for (const id of oldestFirst) {
+    const today = new Set(oldestFirst)
+    for (const t of candidates) {
       if (out.length >= n) break
-      const t = candidates.find(x => x.id === id)
-      if (t) push(t)
+      if (!seenIds.has(t.id) && !seenKeys.has(normKey(t)) && !today.has(t.id)) continue
+      push(t)
     }
   }
   // ③ 仍不足：按排序补齐（同批内仍不重复）

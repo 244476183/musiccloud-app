@@ -640,15 +640,22 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
 
       {/* 档位浮层：★ 十一期删掉「播放页 / 歌词」按钮，只留 4 档 + 真换一批 */}
       <Sheet visible={modeOpen} title="选择档位" badge="4 档 · 同一曲库"
-        subtitle="只调权重，不重载音源、不打断播放" onClose={() => setModeOpen(false)} t={t}>
+        subtitle="只调权重，不重载音源、不打断播放" onClose={() => setModeOpen(false)} t={t}
+        toast={msg || undefined}>
         <View style={s.chips}>
           {MODES.map(m => (
             <Chip key={m.key} label={m.label} on={mode === m.key} t={t}
               onPress={() => {
-                setMode(m.key); setModeOpen(false)
-                /** E：选档位原本零反馈（改完 state 立刻关浮层、内容也不变）。
-                 *  复用页面既有 showMsg 悬浮条（2600ms 自动消失、pointerEvents=none），
-                 *  不新增组件 / 定时器 / 视觉参数。「换一批」已有反馈，不重复加。 */
+                /** v29：选档位有时零反馈的真因 —— Sheet 是原生 Modal（独立窗口），
+                 *  旧版点完立刻 setModeOpen(false) 却把反馈写到底层页 msg，
+                 *  Modal 退场动画期间整窗盖住 → 底层条看不见，而 2600ms 定时器
+                 *  已从点击那一刻跑掉；再叠 fill 排队 / refreshTick 覆盖，时有时无。
+                 *  修：不再立刻关浮层 → 反馈走 <Sheet toast>（Modal 内可见），
+                 *  Chip 的 on 选中态也终于看得见；浮层由 ✕ / 遮罩 / 换一批关闭。
+                 *  复用现成 showMsg 的 2600ms 定时器清 msg（toast 随之消失），
+                 *  零新增 state / 定时器 / 组件。「换一批」是异步 fill 完成后才弹，
+                 *  彼时浮层早已移除、底层 msg 可见，不受影响，不动它。 */
+                setMode(m.key)
                 showMsg(mode === m.key ? '当前档位 · ' + m.label : '已切换到 · ' + m.label)
               }} />
           ))}
