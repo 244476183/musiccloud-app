@@ -3,7 +3,8 @@
  *
  * 拍板口径：
  *   目标 400 / 上限 600 / 冷启 120；14 天淘汰 + 3 天保护 + pins 保留
- *   4 档 = 均衡 / 熟悉 / 尝鲜 / DJ；DJ 软加权 + 不足补齐，不做硬过滤
+ *   4 档 = 均衡 / 熟悉 / 尝鲜 / DJ；★ v35 起 DJ 为「段优先」：DJ 段先跑完回退，
+ *     不足才用普通段补（段内仍是软加权，不做硬过滤；池非空时恒返回 n 首）
  *   画像全删（Profile / noteListen / noteDwell / tasteInfo / scenes / 置信度）
  *   ★ 保留 uses 计数与 pins：熟悉靠 uses*4、尝鲜靠 uses*2 惩罚，砍掉则两档退化成均衡
  *   persist() 只在补货 / 切歌 touch / pin 时触发（无停留结算、无全量画像写盘）
@@ -193,8 +194,8 @@ export const pickGuess = async(n = 30): Promise<Track[]> => {
 }
 
 /**
- * 选题。DJ 档软门槛：先按加权取，命中不足时用均衡歌补满，
- * 绝不返回空列表（400 池里 DJ 命中通常只有几十首，硬过滤会点进去全空）。
+ * 选题（推荐页用）。DJ 档软门槛：先按加权取，命中不足时用均衡歌补满，
+ * 池非空时恒返回 n 首（400 池里 DJ 命中通常只有几十首，硬过滤会点进去全空）。
  */
 export const pick = async(mode: Mode, n = 8): Promise<Track[]> => {
   await load()
@@ -210,11 +211,13 @@ export const pick = async(mode: Mode, n = 8): Promise<Track[]> => {
 
 /**
  * ★ 十一期「1 天内不重复」：供刷歌页专用。
- *   - 先从**全池**按档位排序里挑「当日没出现过」（id 或归一化键都没命中）的；
+ *   - ★ v35：候选按「档位优先段」切开逐段挑选；dj 档先跑完 DJ 段的所有回退，
+ *     普通段只在 DJ 段不足 n 时才补 —— 旧版 ① 段跨到普通歌就填满 n，DJ 档长期失效；
+ *   - 每段先挑「当日没出现过」（id 或归一化键都没命中）的；
  *   - 同批内也按归一化键去重，避免跨音源同曲一次刷出两遍；
- *   - 候选不足（池子当天全刷过）时**按档位排序**优先复用今天出现过的
- *     （v28：不再按最早出现顺序，否则切档会被「最旧的普通歌」占满而失效），
- *     再不够就按排序补齐 —— 保证队列永远补得满，绝不出现「刷不动 / 空列表」。
+ *   - 每段内部：候选不足时**按本段档位排序**优先复用今天出现过的
+ *     （v28：不再按最早出现顺序；v35：段间不越界，DJ 段先吃满回退再进普通段），
+ *     再不够按排序补齐 —— 池非空时恒返回 n 首；池空时由调用方 bootstrap 兜底。
  *   - 不读历史文件、不建定时器、不改通用 pick()（推荐页/浮层/搜索不受影响）。
  */
 export const pickFresh = async(
@@ -224,9 +227,12 @@ export const pickFresh = async(
 ): Promise<Track[]> => {
   await load()
   if (!pool.length) return []
-  const candidates: Track[] = mode === 'dj'
-    ? [...ranked('dj').filter(isDJ), ...ranked('balanced')]
-    : ranked(mode)
+  /** ★ v35：档位优先段。dj 档 = [DJ段, 普通段]，逐段各跑完整的 ①严格→②复用→③补齐；
+   *  前一段填满 n 就不进下一段。非 dj 档只有一段且只调一次 ranked(mode)，
+   *  与旧版随机序列、返回顺序完全一致（推荐页共用 score/ranked 一字未动）。 */
+  const segments: Track[][] = mode === 'dj'
+    ? [ranked('dj').filter(isDJ), ranked('balanced').filter(t => !isDJ(t))]
+    : [ranked(mode)]
   const out: Track[] = []
   const used = new Set<string>()
   const push = (t: Track): boolean => {
@@ -234,30 +240,30 @@ export const pickFresh = async(
     if (used.has(k)) return false
     used.add(k); out.push(t); return true
   }
-  // ① 严格未出现
-  for (const t of candidates) {
+  for (const candidates of segments) {
     if (out.length >= n) break
-    if (seenIds.has(t.id) || seenKeys.has(normKey(t))) continue
-    push(t)
-  }
-  // ② 容量回退：★ v28 档位失效修复 —— 旧版按 oldestFirst（当天最早出现顺序）补满，
-  //    DJ 歌早已被 record() 记入台账，① 严格段把它们全排除后，② 一口气把「最旧的
-  //    普通歌」补满 n，③ 永不执行 → 4 档返回同一批，切档看着毫无效果。
-  //    改为：仍只复用「今天出现过」的（1 天内不重复口径不退化），但按 candidates
-  //    （档位排序）顺序取 —— DJ 档优先复用 DJ 歌，熟悉/尝鲜按各自权重复用。
-  if (out.length < n) {
-    const today = new Set(oldestFirst)
+    // ① 严格未出现（仅本段内）
     for (const t of candidates) {
       if (out.length >= n) break
-      if (!seenIds.has(t.id) && !seenKeys.has(normKey(t)) && !today.has(t.id)) continue
+      if (seenIds.has(t.id) || seenKeys.has(normKey(t))) continue
       push(t)
     }
-  }
-  // ③ 仍不足：按排序补齐（同批内仍不重复）
-  if (out.length < n) {
-    for (const t of candidates) {
-      if (out.length >= n) break
-      push(t)
+    // ② 容量回退：只复用「今天出现过」的，按本段档位排序取
+    //    （1 天内不重复口径不退化；v28 修的是本段内的排序，v35 修的是段间越界）
+    if (out.length < n) {
+      const today = new Set(oldestFirst)
+      for (const t of candidates) {
+        if (out.length >= n) break
+        if (!seenIds.has(t.id) && !seenKeys.has(normKey(t)) && !today.has(t.id)) continue
+        push(t)
+      }
+    }
+    // ③ 仍不足：本段内按排序补齐（同批内仍不重复）
+    if (out.length < n) {
+      for (const t of candidates) {
+        if (out.length >= n) break
+        push(t)
+      }
     }
   }
   return out

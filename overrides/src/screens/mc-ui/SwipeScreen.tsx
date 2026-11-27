@@ -44,7 +44,7 @@ let sessionQueue: SheetTrack[] = []
 let sessionIdx = 0
 let sessionMode: Mode = 'balanced'
 let sessionRev = 0
-/** 「换一批」一次性标记：由档位浮层置起，下一次 fill 消费，绝不残留到切 Tab 重挂载。 */
+/** 「换一批」一次性标记：由档位浮层置起，下一次 fill 消费；切页换池(swap)时也会清掉，不跨挂载残留。 */
 let forceFill = false
 /**
  * ★ 十一期深度自查：所有 fill 串行化。
@@ -225,6 +225,18 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
       if (!ts.length) { await bootstrap(); if (!aliveRef.current) return; ts = await pickFresh(m, 8, seenIds, seenKeys, day.ids) }
       if (!aliveRef.current) return
       const list = ts.map(toSheet)
+      /** ★ v35：空列表统一保护。切档 / 换一批 / 首次进入若继续往下走，
+       *  会把队列截断成 1 首甚至 0 首 → next() 找不到下一首 → 用户直接滑不动。
+       *  swap / append 两个分支各自已有保护，这里只挡其余三条路径。
+       *  ★ v35 重审：这条路径也可能由 refreshTick / 后台补货刷新触发（浮层未开），
+       *  而 Sheet 是 <Modal visible={modeOpen}>，未开时浮层内 toast 根本不渲染。
+       *  两条通道都写：浮层开着 → modeToast 可见（底层 msg 被 Modal 盖住）；
+       *  浮层未开 → 底层 msg 可见（toast 不渲染）。各渲染各的，不会同时可见。 */
+      if (!list.length && !swap && !append) {
+        showModeToast('曲库正在自动补货，稍等一下')
+        showMsg('曲库正在自动补货，稍等一下')
+        return
+      }
 
       /**
        * ★ D-2 A「切回刷歌直接更换新的歌曲池」：整批换掉、连当前歌也不留。
@@ -280,7 +292,7 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
         record(rest)
         commit([cur, ...rest], 0)
         sessionMode = m
-        showMsg('已换一批 · 当前歌不打断')
+        showModeToast('已换一批 · 当前歌不打断')
         return
       }
 
@@ -307,14 +319,18 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
         record(list)
         commit(list, 0)
       }
-      if (!list.length) showMsg('曲库正在自动补货，稍等一下')
-    } catch (e: any) { showMsg(String(e?.message || e)) }
+    } catch (e: any) {
+      /** ★ v35.2：fillChain 是模块级，切页卸载后仍可能有排队的 fill 跑完；
+       *  此时 doFillRef.current 仍指向旧实例，直接 showMsg 会对已卸载组件 setState。
+       *  只在还活着时写提示，正常运行零变化。 */
+      if (aliveRef.current) showMsg(String(e?.message || e))
+    }
   }
   /** 所有调用点统一走这里：排队执行，避免并发写 sessionQueue。 */
   const fill = useCallback((m: Mode, append = false, force = false, swap = false): Promise<void> => {
     const run = fillChain
       .then(() => doFillRef.current(m, append, force, swap))
-      .catch((e: any) => { showMsg(String(e?.message || e)) })
+      .catch((e: any) => { if (aliveRef.current) showMsg(String(e?.message || e)) })
     fillChain = run
     return run
   }, [])
@@ -329,6 +345,11 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
   useEffect(() => {
     if (enterRef.current !== enterSeq) {
       enterRef.current = enterSeq
+      /** ★ v35.2 重审：切页换池时顺手清掉在途的「换一批」标记。
+       *  旧版只在非 swap 分支消费 forceFill，若用户点了换一批后立刻切走、
+       *  切回又走 swap，标记会残留到下一次 refreshTick → 误触发一次 force。
+       *  切页本身已是整批换池，这个在途意图由 swap 覆盖，清掉才符合「一次性」。 */
+      forceFill = false
       void fill(mode, false, false, true)          // 整批换池 + 自动开播
       return
     }
@@ -616,7 +637,7 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
         {/* ★ F-15③：歌名 / 歌手沉到底部，层级与歌词对调 */}
         <View style={s.meta}>
           <Text style={s.title} numberOfLines={1}>{cur?.title || '暂无曲目'}</Text>
-          <Text style={s.artist} numberOfLines={1}>{cur?.artist || '曲库正在自动补货'}</Text>
+          <Text style={s.artist} numberOfLines={1}>{cur ? (cur.artist || '未知歌手') : '曲库正在自动补货'}</Text>
         </View>
 
         {/* 三圆钮：喜欢 / 缓存（toggle）/ 档位 */}
@@ -627,7 +648,7 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
           <TouchableOpacity style={[s.circleBtn, cached && s.circleBtnOk]} onPress={() => void doCache()}>
             <Text style={[s.circleIco, cached && s.circleIcoOk]}>{cached ? '✓' : '↓'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.circleBtn} onPress={() => setModeOpen(true)}><Text style={s.circleIco}>☰</Text></TouchableOpacity>
+          <TouchableOpacity style={s.circleBtn} onPress={() => { setModeToast(''); setModeOpen(true) }}><Text style={s.circleIco}>☰</Text></TouchableOpacity>
         </View>
         <View style={s.labels}>
           {['喜欢', cached ? '已缓存' : '缓存', '档位'].map(x => <Text key={x} style={s.label}>{x}</Text>)}
@@ -674,16 +695,26 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
                  *  fill 链补货提示、[cur?.id] 切歌清 msg、缓存按钮等 8 处写入竞争，
                  *  2.6 秒定时器到期前就被清空/覆盖 → 提示「一闪而过」。
                  *  现改走独立 modeToast（自带定时器 + 关闭/卸载清理），彻底隔离。
-                 *  底层 msg 悬浮条仍负责换一批 / 缓存 / 错误等业务提示，互不影响。 */
+                 *  底层 msg 悬浮条仍负责缓存 / 错误 / 后台补货等业务提示，互不影响。 */
                 setMode(m.key)
                 showModeToast(mode === m.key ? '当前档位 · ' + m.label : '已切换到 · ' + m.label)
               }} />
           ))}
         </View>
+        {/* ★ v35：纯展示预览，让「换了」看得见；读 queue 派生值，
+             无新 state / 新组件 / 新定时器。 */}
+        <Text style={s.preview} numberOfLines={1}>
+          接下来：{!queue.length ? '曲库补货中'
+            : (queue.slice(idx + 1, idx + 4).map(x => x.title).filter(Boolean).join(' / ')
+              || (idx + 1 >= queue.length ? '已到队尾 · 继续下滑加载' : '暂无歌名'))}
+        </Text>
         <SheetButton t={t} label="换一批" onPress={() => {
           forceFill = true
           sessionRev += 1; setRev(sessionRev)
-          closeModeSheet()
+          /** ★ v35：点击瞬间就在浮层内给反馈，且不再立刻关浮层 —— 旧版
+           *  closeModeSheet() 会清掉 toast，真反馈要等 fill 排队完才写底层 msg，
+           *  中间全空白 + Modal 退场遮盖 = 点了不知道有没有换成功。 */
+          showModeToast('正在换一批…')
         }} />
         <View style={{ height: 18 }} />
       </Sheet>
@@ -730,4 +761,5 @@ const makeStyles = (t: Tokens) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginLeft: 4 },
   bigPlayTxt: { color: '#15182C', fontSize: 21, fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 },
+  preview: { color: t.sub, fontSize: 12, textAlign: 'center', marginBottom: 12 },
 })
