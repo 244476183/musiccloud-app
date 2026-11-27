@@ -191,7 +191,7 @@ function Shell({ original }: { original: ReactNode }) {
       setTick(v => v + 1)
       // ★ 十一期「自动补货 + 自动清旧」：冷启灌到 120 能立刻开刷后，
       //   在后台渐进补到 400（每段 restock 内部跑 gc），完成后再 tick 一次刷新三页。
-      //   不阻塞启动、不建定时器；与刷歌页队列见底的触发点共用 restocking 锁。
+      //   不阻塞启动、本段不建定时器（★ v36 的 10 分钟换血定时器在上方独立 effect）；与刷歌页队列见底的触发点共用 restocking 锁。
       void autoRestock().then(() => setTick(v => v + 1))
     })
   }, [])

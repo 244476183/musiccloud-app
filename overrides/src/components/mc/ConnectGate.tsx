@@ -134,13 +134,9 @@ export default ({ onDone }: { onDone: (g: Gate) => void }) => {
           {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={s.btnText}>进入</Text>}
         </TouchableOpacity>
 
-        {/* ★ J：底部常驻版权标识（用户追加）。口径收窄为「不出现操作/错误/
-            连接信息提示，保留这一行版权」；与 F-17「失败只给非文字反馈」不冲突。
-            弹性留白撑开，不用绝对定位 —— 这页有 KeyboardAvoidingView，
-            绝对定位在键盘弹起时容易被顶飞。 */}
+        {/* ★ v37：按合规要求移除底部版权标识文字。
+            弹性留白保留，布局不动；不新增任何提示、定时器或弹层。 */}
         <View style={s.copyFlex} />
-        <Text style={s.copyright} allowFontScaling={false}
-          pointerEvents="none">老技术员原创，仿冒必究</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   )
@@ -162,6 +158,4 @@ const s = StyleSheet.create({
   btnDisabled: { opacity: 0.6 },
   btnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
   copyFlex: { flexGrow: 1, minHeight: 28 },
-  copyright: { color: MC.textDim, fontSize: 11, letterSpacing: 1.5, opacity: 0.45,
-    textAlign: 'center', paddingBottom: 4 },
 })
