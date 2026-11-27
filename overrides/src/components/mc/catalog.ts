@@ -387,3 +387,144 @@ export const bootstrap = (): Promise<void> => {
   })
   return bootPromise
 }
+
+/* ── ★ v36：单池 10 分钟换血 ───────────────────────────────────────────────
+ * 背景：autoRestock 在池满 400 后直接 return 0，加上 3 天保护 / 14 天淘汰，
+ *   池子长期锁死 → 中后期「刷来刷去就那几首」。用户拍板：不扩池、不拆双池、
+ *   不改 SEEDS、不破封、不碰主链，只让池子按节奏换血。
+ *
+ * 定案参数：每 10 分钟淘汰最旧 120 首 → 补满 400；DJ 词只在本趟前置；
+ *   后台不跑、静默、不 setTick（一 tick 推荐页大卡封面整批跳）。
+ *
+ * 两层防护（用户 2026-11-27 追加同意并入）：
+ *   ① 词指针轮换：普通词按固定游标每轮接着跑，不再从头重跑同一批。
+ *     音源对「同一个词」永远返回同一批时，仍能跑到冷启「满池即停」没跑过的词，
+ *     兑现一次性红利；游标哪怕判同批跳过也照常前进，保证下一轮换词。
+ *   ② 累计同批指纹：记录历轮搜索结果的 normKey；本轮结果与历史重合 > 90%
+ *     判「音源同批」→ 不淘汰、不写盘、不搬老歌，直接跳过等下一轮。
+ *     用累计而非「仅上一轮」，才能挡住词轮换回卷后又撞回同一批词的情况。
+ *
+ * 硬边界：音源若对所有词都返回同一批，累计指纹会让换血在红利耗尽后停下，
+ *   本地造不出第 N+1 首 —— 这是音源侧上限，不假装能根治。
+ * ──────────────────────────────────────────────────────────────────────── */
+export const ROTATE_MS = 10 * 60 * 1000
+const ROTATE_DROP = 120
+const ROTATE_CAP = ROTATE_DROP + 60          // 多收一点，避免音源重复时补不满
+const DJ_SEEDS = ['电子舞曲', 'DJ 混音']     // 必须都存在于 SEEDS
+const SAME_BATCH_RATIO = 0.9
+const FINGERPRINT_MAX = 6000
+/** ★ v36 重审：单池共享，score() 只在 dj 档加分，其余三档与推荐页不过滤 DJ。
+ *  DJ 词若每轮无条件前置，池内 DJ 会一路涨到 30~45%（真实执行实测），
+ *  均衡/熟悉/尝鲜/推荐页跟着变 DJ —— 修 A 坏 B。闸门锁在 15%（≈60 首，
+ *  正好是 2 个 DJ 词 × 30 首的天然上限）；淘汰旧 DJ 后占比回落会自动重新前置，
+ *  动态平衡，DJ 歌也持续换血，不是把 DJ 档锁死。 */
+const DJ_POOL_MAX_RATIO = 0.15
+
+let rotateChain: Promise<number> = Promise.resolve(0)
+let rotateCursor = 0
+let rotateRest: string[] = []
+const rotateSeenKeys = new Set<string>()
+
+const ensureRest = (): string[] => {
+  if (!rotateRest.length) {
+    rotateRest = SEEDS.filter(w => !DJ_SEEDS.includes(w)).sort(() => Math.random() - 0.5)
+  }
+  return rotateRest
+}
+
+/** 本轮词序：池内 DJ 不足 15% 时 DJ 词最前（补齐 DJ 档），够了就让位给普通词。
+ *  普通词从游标开始循环取一遍（不重复）。 */
+const roundWords = (): string[] => {
+  const rest = ensureRest()
+  const ordered = rest.map((_, i) => rest[(rotateCursor + i) % rest.length])
+  const djInPool = pool.reduce((n, t) => n + (isDJ(t) ? 1 : 0), 0)
+  return djInPool < TARGET * DJ_POOL_MAX_RATIO ? [...DJ_SEEDS, ...ordered] : ordered
+}
+
+const rotateCore = async(): Promise<number> => {
+  await load()
+  if (pool.length < COLD_START) return 0        // 冷启未就绪，下一轮再说
+  if (restocking) return 0                      // 与 bootstrap / autoRestock / append 互斥，本轮跳过
+  restocking = true
+  let added = 0
+  try {
+    // ① 只搜索、只收集：此刻绝不碰 pool
+    const words = roundWords()
+    const collected: MCTrack[] = []
+    const fingerprint = new Set<string>()
+    let usedRest = 0
+    for (let i = 0; i < words.length && collected.length < ROTATE_CAP; i += 3) {
+      const batch = words.slice(i, i + 3)
+      const rs = await Promise.all(batch.map(k => searchTracks(k, 30).catch(() => [] as MCTrack[])))
+      for (const w of batch) if (!DJ_SEEDS.includes(w)) usedRest++
+      for (const list of rs) for (const t of list) {
+        const k = normKey(t)
+        if (!t.id || !k.replace('|', '')) continue
+        fingerprint.add(k)
+        collected.push(t)
+      }
+    }
+    // 游标照常前进（判同批跳过时也前进），下一轮必换词
+    rotateCursor = (rotateCursor + Math.max(3, usedRest)) % ensureRest().length
+
+    // ② 取源全失败 / 恒返回空（中心挂了 / 内网断了）：本轮什么都不做。
+    //   旧版会继续淘汰 120 首再靠回滚原样放回 → 内容不变却白写一次 86KB 盘，
+    //   恰恰是最该省资源的场景。游标已在上面前进，下一轮自动换词重试。
+    if (!fingerprint.size) return 0
+
+    // 累计同批指纹：几乎全是历史老结果 → 不淘汰、不写盘、不搬老歌
+    if (rotateSeenKeys.size) {
+      let hit = 0
+      for (const k of fingerprint) if (rotateSeenKeys.has(k)) hit++
+      if (hit / fingerprint.size > SAME_BATCH_RATIO) return 0
+    }
+    for (const k of fingerprint) rotateSeenKeys.add(k)
+    if (rotateSeenKeys.size > FINGERPRINT_MAX) rotateSeenKeys.clear()
+
+    // ③ 淘汰最旧 120 首（pinned 保留；待播是 toSheet 值快照，播放不受影响）
+    const dropKeys = new Set(
+      pool.filter(x => !x.pinned)
+        .sort((a, b) => a.addedAt - b.addedAt)
+        .slice(0, ROTATE_DROP)
+        .map(normKey),
+    )
+    /** ★ v36 重审：DJ 歌是「某一轮整批 60 首」加进来的，addedAt 几乎相同；
+     *  闸门让下一轮不再前置 DJ 词时，这批可能被一次性全淘汰 → 池内 DJ 归零 →
+     *  那一轮切 DJ 档只剩普通歌。保底留住最近 30 首 DJ，旧 DJ 照常淘汰，
+     *  既不累积、也不空档（真实执行实测：无保底时 fresh 模式第 3/7/11 轮 DJ=0）。 */
+    const djKeep = new Set(
+      pool.filter(isDJ).sort((a, b) => b.addedAt - a.addedAt).slice(0, 30).map(normKey),
+    )
+    for (const k of djKeep) dropKeys.delete(k)
+    const kept = pool.filter(x => !dropKeys.has(normKey(x)))
+    const seen = new Set(kept.map(normKey))
+    for (const t of collected) {
+      if (kept.length >= TARGET) break
+      const k = normKey(t)
+      if (seen.has(k)) continue
+      seen.add(k)
+      kept.push({ ...t, uses: 0, addedAt: Date.now() })
+      added++
+    }
+    // ④ 补不足 → 回滚淘汰，池长绝不缩（此刻 pool 仍是旧数组）
+    if (kept.length < TARGET) {
+      for (const t of pool) {
+        if (kept.length >= TARGET) break
+        if (dropKeys.has(normKey(t)) && !seen.has(normKey(t))) {
+          seen.add(normKey(t)); kept.push(t)
+        }
+      }
+    }
+    pool = kept
+    await persist()                             // 每轮只写一次
+  } finally {
+    restocking = false
+  }
+  return added
+}
+
+/** 定时器用：上一轮没跑完就排队，不并发；失败也不死链。 */
+export const rotateBatch = (): Promise<number> => {
+  rotateChain = rotateChain.then(rotateCore, rotateCore)
+  return rotateChain
+}

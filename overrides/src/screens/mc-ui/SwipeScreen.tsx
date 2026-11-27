@@ -696,8 +696,18 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
                  *  2.6 秒定时器到期前就被清空/覆盖 → 提示「一闪而过」。
                  *  现改走独立 modeToast（自带定时器 + 关闭/卸载清理），彻底隔离。
                  *  底层 msg 悬浮条仍负责缓存 / 错误 / 后台补货等业务提示，互不影响。 */
-                setMode(m.key)
-                showModeToast(mode === m.key ? '当前档位 · ' + m.label : '已切换到 · ' + m.label)
+                /** ★ v36：再点同一档位原来只弹「当前档位」—— 同值 setMode 触发
+                 *  React bail out，effect 不跑、队列一首不动，用户以为 DJ 档坏了。
+                 *  同档点击改成「再换一批」：必须同时置 forceFill + rev，
+                 *  只置 rev 会撞上 doFillRef 的 m === sessionMode 短路，仍一首不换。 */
+                if (mode === m.key) {
+                  forceFill = true
+                  sessionRev += 1; setRev(sessionRev)
+                  showModeToast('再换一批 · ' + m.label)
+                } else {
+                  setMode(m.key)                 // 异档仍走原有切档分支，行为不变
+                  showModeToast('已切换到 · ' + m.label)
+                }
               }} />
           ))}
         </View>

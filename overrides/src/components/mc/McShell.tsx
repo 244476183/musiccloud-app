@@ -13,7 +13,7 @@
  * 不起第二套播放器、不自建播放状态机、不拦 RNN 路由、不建第二套取源心跳。
  */
 import React, { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, Image } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, Image, AppState } from 'react-native'
 import { DARK, initThemeMode, useTheme, type Tokens } from '@/theme/mc'
 import playerState from '@/store/player/state'
 import { playNext } from '@/core/player/player'
@@ -25,7 +25,7 @@ import { cacheLocal, isCached, removeCached } from './localCache'
 import { usePlayer } from './usePlayer'
 import { sourceReady } from './autoSource'
 import * as playQueue from './playQueue'
-import { bootstrap, autoRestock, touch, backfillCover } from './catalog'
+import { bootstrap, autoRestock, touch, backfillCover, ROTATE_MS, rotateBatch } from './catalog'
 import {
   doPause, doResume, isFavorite, playTrack, playBatch as playBatchUpstream,
   clearBatch, seekToRatio, toggleFavorite, type MCTrack,
@@ -126,6 +126,22 @@ function Shell({ original }: { original: ReactNode }) {
    *  若早期被拖小并持久化，用户调不回来。挂载时（init 已读完设置）复位一次，
    *  默认 1 时零写入、零事件、零播放器调用。 */
   useEffect(() => { resetVolumeIfNeeded() }, [])
+  /**
+   * ★ v36：单池 10 分钟换血。首个 10 分钟后才跑，冷启
+   *   bootstrap → autoRestock → setTick 链路完全不变。
+   *   后台不跑、回前台不补跑（省内网请求）；换血完成不弹提示、不 setTick，
+   *   下一次用户切档 / 换一批 / 滑到队尾时 pickFresh 自然读到新池。
+   *   catalog 内部自带串行排队，不会并发。
+   */
+  useEffect(() => {
+    const id = setInterval(() => {
+      /** RN 启动期 AppState.currentState 可能为 null（首个事件到达前）；
+       *  null 视作可跑，别把首个 10 分钟轮白跳过。 */
+      if (AppState.currentState && AppState.currentState !== 'active') return
+      void rotateBatch()
+    }, ROTATE_MS)
+    return () => clearInterval(id)
+  }, [])
   const FRIENDLY_SOURCE_ERR = '这首暂时没找到可播音源，换一首试试'
   const friendlyErr = (e: any): string => {
     const m = String(e?.message || e || '')
