@@ -1,7 +1,6 @@
 /**
  * 推荐页 —— 按废弃版真机截图复刻：
- * 搜索框 / 猜你喜欢+每日推荐 大卡 / TOP500+常听歌手 横卡 / 场景横滑 /
- * 热门榜单 2×2 / 单曲推荐卡 / 5 档曲库；浮层复刻「猜你喜欢」「每日推荐 30 首」。
+ * 搜索框 / 猜你喜欢+每日推荐 大卡 / 场景卡 / 热门歌单 10 张（含 TOP500 / 常听歌手）。
  * 所有播放走 onPlay（原装 getMusicUrl + setResource），本页零播放器状态。
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react'
@@ -10,7 +9,7 @@ import {
 } from 'react-native'
 import { type Tokens } from '@/theme/mc'
 import {
-  BigEntryCard, BoardCard, Chip, Cover, SceneCard, SectionTitle, SheetButton,
+  BigEntryCard, BoardCard, Chip, SceneCard, SectionTitle, SheetButton,
   SongListSheet, SongRow, type SheetTrack,
 } from '@/components/mc/UI'
 import { MODES, bootstrap, pick, pickDaily, pickGuess, snapshot, stats, type Track, type Mode } from '@/components/mc/catalog'
@@ -41,8 +40,14 @@ let lastRefreshKey = ''
 /** ★ 十一期：rev 升模块级，切 Tab 重挂载不再归 0 → 不会「回来无故换一批」。 */
 let sessionRev = 0
 
-/** ★ F-05：去掉与上方两张小卡重复的 TOP500 / 常听歌手，扩到 8 张（含「新歌速递」）。 */
-const BOARDS: Array<{ title: string, sub: string, seed: string, mode: Mode }> = [
+/** 10 张统一走 BoardCard / boardCell；前两张为并入的 TOP500 / 常听歌手，
+ *  浮层标题与 badge 用可选字段精确复刻原横卡，点击路由与 mode 一字不改。 */
+const BOARDS: Array<{ title: string, sub: string, seed: string, mode: Mode,
+  sheetTitle?: string, sheetBadge?: string }> = [
+  { title: 'TOP500', sub: '20 个榜单', seed: 'TOP500', mode: 'familiar',
+    sheetTitle: 'TOP500 · 热门榜单', sheetBadge: '实时 · 全网' },
+  { title: '常听歌手', sub: '按熟悉度', seed: '常听歌手', mode: 'balanced',
+    sheetTitle: '常听歌手', sheetBadge: '按熟悉度排序' },
   { title: '飙升榜', sub: '实时 · 全网', seed: '飙升榜', mode: 'fresh' },
   { title: '私人雷达', sub: '独立算法 · DJ', seed: '私人雷达', mode: 'dj' },
   { title: '新歌速递', sub: '最新上线', seed: '新歌速递', mode: 'fresh' },
@@ -58,27 +63,6 @@ const SCENES = [
   { icon: '☾', title: '深夜', desc: '慢下来，留给\n自己的时间', color: '#D94FA0', mode: 'familiar' as Mode },
   { icon: '◐', title: '通勤', desc: '刚好够一段\n路上的时间', color: '#22AEE0', mode: 'fresh' as Mode },
 ]
-
-/** ★ F-11：叠列小卡（酷狗形态里的「2 张小卡叠成一列」）。
- *  并列结构：主体 Touchable 与 ▶ 各一个 sibling，不嵌套，避免 RN 双触发。 */
-const StackMini = ({ t, s, title, sub, bg, cover, onPress, onQuickPlay }: {
-  t: Tokens; s: any; title: string; sub: string; bg: string; cover?: string
-  onPress: () => void; onQuickPlay: () => void
-}) => (
-  <View style={[s.miniCell, { backgroundColor: bg }]}>
-    <TouchableOpacity style={s.miniCellMain} onPress={onPress} activeOpacity={0.88}>
-      <Cover uri={cover} title={title} size={36} radius={9} t={t} />
-      <View style={s.miniCellBody}>
-        <Text style={s.miniCellTitle} numberOfLines={1}>{title}</Text>
-        <Text style={s.miniCellSub} numberOfLines={1}>{sub}</Text>
-      </View>
-    </TouchableOpacity>
-    <TouchableOpacity style={s.miniCellPlay} onPress={onQuickPlay} activeOpacity={0.85}
-      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-      <Text style={s.miniCellPlayTxt}>▶</Text>
-    </TouchableOpacity>
-  </View>
-)
 
 const dateLabel = () => {
   const d = new Date()
@@ -263,19 +247,22 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
    */
   /**
    * ★ 九期（封面修复②，修正七期④的副作用）：七期为治「封面乱跳」改成只取
-   *   snapshot().slice(0,8)，但冷启第一批恰好最可能没封面 → 一张都没有时
+   *   snapshot().slice(0,8)（历史口径，v44 起改为全池筛出前 12 张），冷启第一批最可能没封面 →
    *   整页卡片全空，反而放大了「大部分封面都没有」。
-   *   改为从**全池**筛出有图的取前 8 张（池子顺序稳定，仍不随随机列表抖）；
-   *   deps 带上 player.track?.id，播放回填封面后（McShell → backfillCover）自动补上。
+   *   改为从**全池**筛出有图的取前 12 张、按槽位分配不回放（池子顺序稳定，仍不随随机列表抖）；
+   *   deps 现为 [refreshTick, st.count]（player.track?.id 已于十一期去掉，见下）；
    *   全池真的没图才返回 ['']，由 Cover / 大卡几何兜底，永不空白。
    */
   /** ★ 十一期：去掉 player.track?.id 依赖 —— 旧版一切歌大卡封面就整批换，
    *  用户以为「推荐页每隔一段时间自动换一批」。改为只随曲库池内容 / 数量变化。 */
   const covers = useMemo(() => {
-    const all = snapshot().map(x => String(x.cover || '')).filter(Boolean).slice(0, 8)
+    // 槽位：双大卡 0/1 + 10 张榜单 2..11，共 12 槽；各自取一张，不回放。
+    const all = snapshot().map(x => String(x.cover || '')).filter(Boolean).slice(0, 12)
     return all.length ? all : ['']
   }, [refreshTick, st.count])
-  const cv = (i: number) => covers[i % covers.length]
+  /** 按槽位取，不取模回放；封面用尽的槽位传空串 → Cover 按 seed 几何兜底。
+   *  消除取模回放导致的重复；若池内多首歌共享同一封面 URL，仍可能出现重复（已知边界，见自查报告）。 */
+  const cv = (i: number): string => covers[i] || ''
 
   return (
     <View style={s.root}>
@@ -310,8 +297,7 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
           </>
         ) : (
           <>
-            {/* ★ 本轮：全部固定位置，不再横滑。双大卡在上、双小卡在下。
-                ▶ 仍直接播该卡批次，点其余区域进浮层自选（功能一字未动）。 */}
+            {/* 双大卡尺寸一字不变；▶ 仍直接播该卡批次，其余区域进浮层自选。 */}
             <View style={s.bigRow}>
               <View style={s.bigItem}>
                 <BigEntryCard t={t} variant="guess" title="猜你喜欢" sub="私人 DJ" cover={cv(0)}
@@ -325,19 +311,6 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
                   onQuickPlay={() => void quickPlay('daily', 'fresh', 30)} />
               </View>
             </View>
-            <View style={s.miniRow}>
-              <View style={s.miniItem}>
-                <StackMini t={t} s={s} title="TOP500" sub="20 个榜单" bg="#3FA9E8" cover={cv(2)}
-                  onPress={() => openSheet('board', 'familiar', 'TOP500 · 热门榜单', '实时 · 全网', 30)}
-                  onQuickPlay={() => void quickPlay('board', 'familiar', 30)} />
-              </View>
-              <View style={s.miniItem}>
-                <StackMini t={t} s={s} title="常听歌手" sub="按熟悉度" bg="#F5A24A" cover={cv(3)}
-                  onPress={() => openSheet('board', 'balanced', '常听歌手', '按熟悉度排序', 30)}
-                  onQuickPlay={() => void quickPlay('board', 'balanced', 30)} />
-              </View>
-            </View>
-
             {/* 场景横滑：★ 十一期：整卡直接播，不给自选浮层 */}
             <SectionTitle t={t}>按现在的场景听</SectionTitle>
             <View style={s.sceneRow}>
@@ -347,14 +320,14 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
               ))}
             </View>
 
-            {/* ★ 本轮：8 张 2 列 × 4 行固定网格，不横滑（效果图 2 口径）。
-                SectionTitle 不传 right，避免「带 › 却没 onRight」的假可点。 */}
+            {/* 10 张 2 列 × 5 行，统一 BoardCard；不传 right，避免「带 › 却没 onRight」。 */}
             <SectionTitle t={t}>热门歌单</SectionTitle>
             <View style={s.boardGrid}>
               {BOARDS.map((b, i) => (
                 <View key={b.title} style={s.boardCell}>
-                  <BoardCard t={t} title={b.title} sub={b.sub} seed={b.seed} cover={cv(4 + i)}
-                    onPress={() => openSheet('board', b.mode, `${b.title} · 热门榜单`, b.sub, 30)}
+                  <BoardCard t={t} title={b.title} sub={b.sub} seed={b.seed} cover={cv(2 + i)}
+                    onPress={() => openSheet('board', b.mode,
+                      b.sheetTitle ?? `${b.title} · 热门榜单`, b.sheetBadge ?? b.sub, 30)}
                     onQuickPlay={() => void quickPlay('board', b.mode, 30)} />
                 </View>
               ))}
@@ -433,17 +406,6 @@ const makeStyles = (t: Tokens) => StyleSheet.create({
   /* ★ 本轮：全部固定位置，尺寸/圆角/字阶统一收紧（不再横滑、不再过大） */
   bigRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
   bigItem: { flex: 1, minWidth: 0 },
-  miniRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
-  miniItem: { flex: 1, minWidth: 0 },
-  miniCell: { height: 96, borderRadius: 14, flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 10, gap: 8, overflow: 'hidden' },
-  miniCellMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  miniCellBody: { flex: 1, minWidth: 0 },
-  miniCellTitle: { color: '#FFF', fontSize: 13, fontWeight: '800' },
-  miniCellSub: { color: 'rgba(255,255,255,.88)', fontSize: 10, marginTop: 3 },
-  miniCellPlay: { width: 26, height: 26, borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.28)', alignItems: 'center', justifyContent: 'center' },
-  miniCellPlayTxt: { color: '#FFF', fontSize: 11, marginLeft: 1 },
   sceneRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
   boardGrid: { flexDirection: 'row', flexWrap: 'wrap',
     justifyContent: 'space-between', marginBottom: 6 },

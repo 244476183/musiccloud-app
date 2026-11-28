@@ -24,7 +24,7 @@ import ErrorBoundary from './ErrorBoundary'
 import { cacheLocal, isCached, removeCached } from './localCache'
 import { usePlayer } from './usePlayer'
 import * as playQueue from './playQueue'
-import { bootstrap, autoRestock, touch, backfillCover, ROTATE_MS, rotateBatch } from './catalog'
+import { bootstrap, autoRestock, touch, backfillCover, ROTATE_MS, rotateBatch, stats } from './catalog'
 import {
   doPause, doResume, isFavorite, playTrack, playBatch as playBatchUpstream,
   clearBatch, seekToRatio, toggleFavorite, type MCTrack,
@@ -37,11 +37,22 @@ import MineScreen from '@/screens/mc-ui/MineScreen'
    ESM 只求值一次，幂等；upstream / mc-center / 取链六步一字不动。 */
 import './sourceUpdateGuard'
 import { resetVolumeIfNeeded } from './volumeGuard'
+import { pushRotateLog, type RotateKind } from './rotateLog'
 
 /** ★ v37：进程首次挂载后 1 分钟补一轮换血，仅一次。进程级标记（非落盘）：
  *  杀进程重开即重新计时；组件重挂载 / StrictMode 双调用不重复注册。 */
 const COLD_KICK_MS = 60 * 1000
 let coldKickDone = false
+
+/** 换血日志旁路：包一层 rotateBatch，记录真实触发过的轮次。
+ *  不新增定时器、不 await 写盘、不改返回值；写盘失败由 pushRotateLog 内部静默吞掉。 */
+const loggedRotate = (kind: RotateKind, retryNo?: number): Promise<number> => {
+  const t0 = Date.now()
+  return rotateBatch().then(n => {
+    void pushRotateLog({ at: t0, kind, retry: retryNo, n, pool: stats().count, ms: Date.now() - t0 })
+    return n
+  })
+}
 
 const toMCTrack = (tr: SheetTrack): MCTrack => ({
   id: tr.id,
@@ -140,7 +151,7 @@ function Shell({ original }: { original: ReactNode }) {
    *   catalog 内部自带串行排队（rotateChain），两个定时器撞上也不并发。
    */
   useEffect(() => {
-    const id = setInterval(() => { void rotateBatch() }, ROTATE_MS)
+    const id = setInterval(() => { void loggedRotate('cycle') }, ROTATE_MS)
     let kick: ReturnType<typeof setTimeout> | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
     if (!coldKickDone) {
@@ -152,9 +163,11 @@ function Shell({ original }: { original: ReactNode }) {
          *  中心挂了 / 音源恒同批时 4 轮后自然放弃，与周期轮口径一致，不死链、不弹提示。 */
         let tries = 0
         const attempt = () => {
-          void rotateBatch().then(n => {
-            if (n === 0 && tries++ < 3) retry = setTimeout(attempt, 30 * 1000)
-          }).catch(() => {})
+          const isCold = tries === 0
+          void loggedRotate(isCold ? 'cold' : 'retry', isCold ? undefined : tries)
+            .then(n => {
+              if (n === 0 && tries++ < 3) retry = setTimeout(attempt, 30 * 1000)
+            }).catch(() => {})
         }
         attempt()
       }, COLD_KICK_MS)

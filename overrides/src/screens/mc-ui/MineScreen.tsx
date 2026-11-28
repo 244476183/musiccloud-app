@@ -26,6 +26,7 @@ import { getFavoriteTracks } from '@/components/mc/upstream'
 import {
   cachedToSheet, listCached, clearAllCached, type CachedItem,
 } from '@/components/mc/localCache'
+import { readRotateLog, clearRotateLog, type RotateEntry } from '@/components/mc/rotateLog'
 import { type PlayerView } from '@/components/mc/usePlayer'
 
 type Tab = '缓存记录' | '我喜欢的歌' | '自建歌单'
@@ -37,6 +38,16 @@ const TABS: Array<{ key: Tab, icon: string, color: string }> = [
 
 /** ★ 十期 P0-1：与刷歌/推荐一致，切 Tab 卸载重挂后保留用户选中的分类。 */
 let sessionTab: Tab = '我喜欢的歌'
+
+const hhmmss = (at: number): string => {
+  const d = new Date(at)
+  const p = (v: number) => String(v).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+const kindLabel = (e: RotateEntry): string =>
+  e.kind === 'cold' ? '冷启'
+    : e.kind === 'retry' ? `冷启重试${e.retry ?? 1}`
+      : '8分钟轮'
 
 const toSheet = (x: any): SheetTrack => ({
   id: String(x.id ?? x.songmid ?? ''),
@@ -61,6 +72,7 @@ export default ({ t, player, onPlay, refreshTick }: {
   const [favs, setFavs] = useState<SheetTrack[]>([])
   const [cached, setCached] = useState<CachedItem[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [logs, setLogs] = useState<RotateEntry[]>([])
   /** ★ 隐藏入口：2 秒内连点底部小字 5 次 → 自定义源勾选页（最后退路） */
   const tapRef = useRef({ count: 0, at: 0 })
   const onAvatar = () => {
@@ -85,6 +97,14 @@ export default ({ t, player, onPlay, refreshTick }: {
     })()
     return () => { alive = false }
   }, [rev, refreshTick, player.track?.id])
+
+  /** 打开设置时读一次；换血不 setTick，故不做实时轮询。 */
+  useEffect(() => {
+    if (!settingsOpen) return
+    let alive = true
+    void readRotateLog().then(l => { if (alive) setLogs(l) })
+    return () => { alive = false }
+  }, [settingsOpen])
 
   const cachedSheets = cached.map(cachedToSheet)
   const list = tab === '我喜欢的歌' ? favs
@@ -163,9 +183,37 @@ export default ({ t, player, onPlay, refreshTick }: {
         <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* ★ v32 / Q：只挂精简选源列表；底部小字退路、白底外壳、返回键全部不动。 */}
-      <FullModal visible={settingsOpen} title="自定义源" t={t} onClose={() => setSettingsOpen(false)}>
-        <SourcePicker />
+      {/* 白底外壳 + 返回键不动；body 自带滚动，选源与日志同处一页。 */}
+      <FullModal visible={settingsOpen} title="设置" t={t} onClose={() => setSettingsOpen(false)}>
+        <ScrollView style={s.settingsScroll} contentContainerStyle={s.settingsBody}
+          showsVerticalScrollIndicator={false}>
+          <SourcePicker />
+          <View style={s.logHead}>
+            <View style={s.secBar} />
+            <Text style={s.logTitle}>池子换血日志</Text>
+            <TouchableOpacity onPress={() => { void clearRotateLog().then(() => setLogs([])) }}
+              hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+              <Text style={s.logClear}>清空</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={s.logCard}>
+            {logs.length ? logs.map((e, i) => (
+              <View key={`${e.at}-${i}`} style={[s.logRow, i === logs.length - 1 && s.logRowLast]}>
+                <Text style={s.logTime}>{hhmmss(e.at)}</Text>
+                <View style={[s.logKind, e.kind === 'cold' && s.logKindCold,
+                  e.kind === 'retry' && s.logKindRetry]}>
+                  <Text style={s.logKindTxt}>{kindLabel(e)}</Text>
+                </View>
+                <Text style={[s.logRes, e.n === 0 && s.logResSkip]} numberOfLines={1}>
+                  {e.n > 0 ? `换入 ${e.n} 首` : '本轮跳过'}
+                </Text>
+                <Text style={s.logMeta} numberOfLines={1}>
+                  池 {e.pool} · {(e.ms / 1000).toFixed(1)}s
+                </Text>
+              </View>
+            )) : <Text style={s.logEmpty}>暂无换血记录</Text>}
+          </View>
+        </ScrollView>
       </FullModal>
     </View>
   )
@@ -195,4 +243,25 @@ const makeStyles = (t: Tokens) => StyleSheet.create({
   note: { color: t.dim, fontSize: 11, lineHeight: 18, marginTop: 16 },
   hiddenEntry: { alignSelf: 'center', marginTop: 26, paddingVertical: 6, paddingHorizontal: 18 },
   hiddenTxt: { color: t.dim, fontSize: 10, letterSpacing: 1, opacity: 0.32 },
+  settingsScroll: { flex: 1 },
+  settingsBody: { paddingBottom: 24 },
+  logHead: { flexDirection: 'row', alignItems: 'center', gap: 9,
+    marginHorizontal: 16, marginTop: 20, marginBottom: 10 },
+  logTitle: { flex: 1, color: '#15182C', fontSize: 15, fontWeight: '800' },
+  logClear: { color: '#8A93AE', fontSize: 12, fontWeight: '700' },
+  logCard: { marginHorizontal: 16, backgroundColor: '#F8F9FD', borderRadius: 14,
+    paddingHorizontal: 12 },
+  logRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 11,
+    borderBottomWidth: 1, borderBottomColor: '#EDEFF7' },
+  logRowLast: { borderBottomWidth: 0 },
+  logTime: { width: 60, color: '#5B6480', fontSize: 12, fontWeight: '700' },
+  logKind: { paddingVertical: 3, paddingHorizontal: 7, borderRadius: 6,
+    backgroundColor: '#E3F2FF' },
+  logKindCold: { backgroundColor: '#EDE7FF' },
+  logKindRetry: { backgroundColor: '#FFF0DC' },
+  logKindTxt: { color: '#2A7FD4', fontSize: 10, fontWeight: '800' },
+  logRes: { flex: 1, minWidth: 0, color: '#15182C', fontSize: 12, fontWeight: '700' },
+  logResSkip: { color: '#9AA2BC', fontWeight: '600' },
+  logMeta: { color: '#9AA2BC', fontSize: 10 },
+  logEmpty: { color: '#9AA2BC', fontSize: 13, textAlign: 'center', paddingVertical: 26 },
 })
