@@ -13,7 +13,7 @@
  * 不起第二套播放器、不自建播放状态机、不拦 RNN 路由、不建第二套取源心跳。
  */
 import React, { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, Image } from 'react-native'
+import { View, Text, StyleSheet, StatusBar, Platform, Image } from 'react-native'
 import { DARK, initThemeMode, useTheme, type Tokens } from '@/theme/mc'
 import playerState from '@/store/player/state'
 import { playNext } from '@/core/player/player'
@@ -23,7 +23,6 @@ import FullPlayer from './FullPlayer'
 import ErrorBoundary from './ErrorBoundary'
 import { cacheLocal, isCached, removeCached } from './localCache'
 import { usePlayer } from './usePlayer'
-import { sourceReady } from './autoSource'
 import * as playQueue from './playQueue'
 import { bootstrap, autoRestock, touch, backfillCover, ROTATE_MS, rotateBatch } from './catalog'
 import {
@@ -66,7 +65,6 @@ function Shell({ original }: { original: ReactNode }) {
   const [tab, setTab] = useState<TabKey>('reco')
   const [fullOpen, setFullOpen] = useState(false)
   const [cached, setCached] = useState(false)
-  const [ready, setReady] = useState<boolean | null>(null)
   const [err, setErr] = useState('')
   const [fav, setFav] = useState(false)
   const [tick, setTick] = useState(0)
@@ -220,16 +218,6 @@ function Shell({ original }: { original: ReactNode }) {
       void autoRestock().then(() => setTick(v => v + 1))
     })
   }, [])
-
-  useEffect(() => {
-    let alive = true
-    const check = async() => { const r = await sourceReady(); if (alive) setReady(r) }
-    void check()
-    const ev: any = (global as any).state_event
-    const onSrc = () => { void check() }
-    if (ev && typeof ev.on === 'function') ev.on('apiSourceUpdated', onSrc)
-    return () => { alive = false; if (ev && typeof ev.off === 'function') ev.off('apiSourceUpdated', onSrc) }
-  }, [tick])
 
   useEffect(() => { setFav(player.track ? isFavorite(player.track as any) : false) }, [player.track?.id])
 
@@ -474,17 +462,13 @@ function Shell({ original }: { original: ReactNode }) {
           <Text style={s.themeHintTxt}>{themeHint}</Text>
         </View>
       ) : null}
-      {ready === false && tab !== 'swipe' ? (
-        <TouchableOpacity style={s.status} onPress={() => changeTab('mine')} activeOpacity={0.85}>
-          <Text style={s.statusTxt}>音源初始化中 / 未就绪 · 请稍候或检查中心连接</Text>
-        </TouchableOpacity>
-      ) : null}
-      {/* ★ P2-H：刷歌页自身错误不经 McShell err（v27 再用 errOwner 做来源隔离）；
-          ★ v27：2.6s 自动消失、切页即清、文案走我方口径、点一下也能关。 */}
-      {err && tab !== 'swipe' ? (
-        <TouchableOpacity style={s.errBar} onPress={clearErr}>
+      {/* ★ 取链失败红条：三页统一浮层展示，不占布局、不吃刷歌手势。
+          ★ v27：2.6s 自动消失、切页即清、文案走我方口径、errOwner 跨页隔离。 */}
+      {err ? (
+        <View style={[s.errBar, { position: 'absolute', top: topInset + 54,
+          left: 0, right: 0, zIndex: 31 }]} pointerEvents="none">
           <Text style={s.errTxt} numberOfLines={2}>{err}</Text>
-        </TouchableOpacity>
+        </View>
       ) : null}
 
       <View style={s.body}>
@@ -531,8 +515,6 @@ const styles = (t: Tokens) => StyleSheet.create({
   swipeBgImg: { ...StyleSheet.absoluteFillObject, opacity: 0.92 },
   swipeBgVeil: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,12,26,0.60)' },
   body: { flex: 1 },
-  status: { backgroundColor: t.pill, paddingVertical: 7, paddingHorizontal: 14 },
-  statusTxt: { color: t.warn, fontSize: 12 },
   errBar: { backgroundColor: 'rgba(255,90,122,0.14)', paddingVertical: 8, paddingHorizontal: 14 },
   errTxt: { color: t.red, fontSize: 13 },
   themeHint: { backgroundColor: 'rgba(109,94,252,0.94)', paddingVertical: 9, paddingHorizontal: 14 },
