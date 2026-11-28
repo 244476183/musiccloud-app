@@ -1,7 +1,7 @@
 /**
  * 推荐页 —— 按废弃版真机截图复刻：
  * 搜索框 / 猜你喜欢+每日推荐 大卡 / TOP500+常听歌手 横卡 / 场景横滑 /
- * 热门榜单 2×2 / 单曲推荐卡 / 4 档曲库；浮层复刻「猜你喜欢」「每日推荐 30 首」。
+ * 热门榜单 2×2 / 单曲推荐卡 / 5 档曲库；浮层复刻「猜你喜欢」「每日推荐 30 首」。
  * 所有播放走 onPlay（原装 getMusicUrl + setResource），本页零播放器状态。
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react'
@@ -163,7 +163,7 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }
 
-  /** 三种来源：猜你喜欢＝最近播放共现加权；每日推荐＝日期种子当天稳定；榜单＝4 档重排。 */
+  /** 三种来源：猜你喜欢＝最近播放共现加权；每日推荐＝日期种子当天稳定；榜单＝5 档重排。 */
   const querySheet = (k: SheetKey, m: Mode, n: number) =>
     k === 'guess' && m === 'balanced' ? pickGuess(n)
       : k === 'daily' ? pickDaily(dateKey(), n)
@@ -361,7 +361,7 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
             </View>
 
             {/* ★ F-04：「为你推荐」「曲库」两区块已按要求删除。
-                4 档选档能力仍在刷歌页档位浮层里完整保留，不构成能力倒退。 */}
+                档位选档能力仍在刷歌页档位浮层里完整保留，不构成能力倒退。 */}
           </>
         )}
         <View style={{ height: 20 }} />
@@ -384,13 +384,13 @@ export default ({ t, player, onPlay, onPlayBatch, refreshTick }: {
         tracks={sheetTracks} onClose={() => setSheet(null)}
         onPlay={playAndClose} onPlayAll={playAllAndClose}
         onBatch={() => {
-          // ★ 十一期：daily 是日期种子、guess 是固定种子+最近播放，**两者都是确定性结果**，
-          //   直接 fillSheet 原样返回同一批 → 点「换一批」毫无反应（十期只修了 daily，漏了 guess）。
-          //   用户主动要换就改走 board 的随机重排，并同步 badge 免得名实不符。
+          // ★ 十一期：daily / guess 原样重查会返回同一批，「换一批」毫无反应 → 改走 board 重排。
+          //   daily 的 sheetMode=fresh，沿用会把每日推荐变成尝鲜加权，故仍强制均衡；
+          //   其余保留用户所选档位（选中文歌后换一批不掉档），并同步 badge。
           const deterministic = sheet === 'daily' || sheet === 'guess'
           if (deterministic) setSheetBadge('已换一批')
           void fillSheet(deterministic ? 'board' : sheet,
-            deterministic ? 'balanced' : sheetMode, 30)
+            sheet === 'daily' ? 'balanced' : sheetMode, 30)
         }}
         onCache={tr => void doCache(tr)}
         playingId={player.track?.id} t={t} toast={sheetToast || undefined}

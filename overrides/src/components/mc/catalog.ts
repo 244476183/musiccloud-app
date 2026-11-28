@@ -1,9 +1,9 @@
 /**
- * 曲库池 + 4 档推荐 —— 纯数据层，零播放编排、零画像。
+ * 曲库池 + 5 档推荐 —— 纯数据层，零播放编排、零画像。
  *
  * 拍板口径：
  *   目标 400 / 上限 600 / 冷启 120；14 天淘汰 + 3 天保护 + pins 保留
- *   4 档 = 均衡 / 熟悉 / 尝鲜 / DJ；★ v35 起 DJ 为「段优先」：DJ 段先跑完回退，
+ *   5 档 = 均衡 / 熟悉 / 尝鲜 / DJ / 中文歌；★ v35 起 DJ 为「段优先」：DJ 段先跑完回退，
  *     不足才用普通段补（段内仍是软加权，不做硬过滤；池非空时恒返回 n 首）
  *   画像全删（Profile / noteListen / noteDwell / tasteInfo / scenes / 置信度）
  *   ★ 保留 uses 计数与 pins：熟悉靠 uses*4、尝鲜靠 uses*2 惩罚，砍掉则两档退化成均衡
@@ -21,12 +21,13 @@ const PROTECT_DAYS = 3
 const DAY = 86400000
 const STORE_KEY = 'mc_catalog_v1'
 
-export type Mode = 'balanced' | 'familiar' | 'fresh' | 'dj'
+export type Mode = 'balanced' | 'familiar' | 'fresh' | 'dj' | 'chinese'
 export const MODES: Array<{ key: Mode, label: string }> = [
   { key: 'balanced', label: '均衡' },
   { key: 'familiar', label: '熟悉' },
   { key: 'fresh', label: '尝鲜' },
   { key: 'dj', label: 'DJ' },
+  { key: 'chinese', label: '中文歌' },
 ]
 
 export type Track = MCTrack & { uses: number, addedAt: number, pinned?: boolean }
@@ -131,7 +132,7 @@ const rng = (seed: number): (() => number) => {
   }
 }
 
-/** 单一 score()，4 档只调权重；不再有硬特征过滤、不再有 30 秒挑歌。 */
+/** 单一 score()，5 档只调权重；不再有硬特征过滤、不再有 30 秒挑歌。 */
 const score = (t: Track, mode: Mode, r: () => number = Math.random): number => {
   const freshness = Math.max(0, 1 - (Date.now() - t.addedAt) / (GC_DAYS * DAY))
   const rand = r() * 6
@@ -139,6 +140,7 @@ const score = (t: Track, mode: Mode, r: () => number = Math.random): number => {
   if (mode === 'familiar') v += t.uses * 4
   else if (mode === 'fresh') v -= t.uses * 2
   if (mode === 'dj' && isDJ(t)) v += 40
+  if (mode === 'chinese' && isChinese(t)) v += 40
   if (t.pinned) v += 8
   return v
 }
@@ -148,6 +150,15 @@ const score = (t: Track, mode: Mode, r: () => number = Math.random): number => {
  * 同一元素在不同比较中得分不同（比较器非确定），排序结果偏斜。
  * 改为「先给每首算一次分 → 按分数排序」，随机只抽一次。
  */
+/** 中文歌档：歌名/歌手的 CJK 汉字软判；假名/谚文一票否决（日文汉字、韩文、feat. 日名不算）。
+ *  无语言字段可用、raw 各音源不统一，只做「尽量」；全英文名的中文歌会漏判。
+ *  定义在 score 之后、ranked 之前：运行期才调用，且落在 _v35_verify 的 sc 抽片内。 */
+const isChinese = (t: Track): boolean => {
+  const s = t.title + ' ' + t.artist
+  if (/[\u3040-\u30ff\uac00-\ud7af]/.test(s)) return false
+  return /[\u4e00-\u9fff]/.test(s)
+}
+
 const ranked = (m: Mode, r: () => number = Math.random): Track[] => pool
   .map(t => ({ t, v: score(t, m, r) }))
   .sort((a, b) => b.v - a.v)

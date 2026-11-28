@@ -681,8 +681,8 @@ export default ({ t, player, onPlay, onToggle, onSeek, onCoverChange, enterSeq, 
         <View style={s.msg} pointerEvents="none"><Text style={s.msgTxt}>{msg}</Text></View>
       ) : null}
 
-      {/* 档位浮层：★ 十一期删掉「播放页 / 歌词」按钮，只留 4 档 + 真换一批 */}
-      <Sheet visible={modeOpen} title="选择档位" badge="4 档 · 同一曲库"
+      {/* 档位浮层：★ 十一期删掉「播放页 / 歌词」按钮，只留档位 + 真换一批 */}
+      <Sheet visible={modeOpen} title="选择档位" badge="5 档 · 同一曲库"
         subtitle="只调权重，不重载音源、不打断播放" onClose={closeModeSheet} t={t}
         toast={modeToast || undefined}>
         <View style={s.chips}>
