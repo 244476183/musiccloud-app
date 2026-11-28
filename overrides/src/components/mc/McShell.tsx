@@ -13,7 +13,7 @@
  * 不起第二套播放器、不自建播放状态机、不拦 RNN 路由、不建第二套取源心跳。
  */
 import React, { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, Image, AppState } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, Image } from 'react-native'
 import { DARK, initThemeMode, useTheme, type Tokens } from '@/theme/mc'
 import playerState from '@/store/player/state'
 import { playNext } from '@/core/player/player'
@@ -38,6 +38,11 @@ import MineScreen from '@/screens/mc-ui/MineScreen'
    ESM 只求值一次，幂等；upstream / mc-center / 取链六步一字不动。 */
 import './sourceUpdateGuard'
 import { resetVolumeIfNeeded } from './volumeGuard'
+
+/** ★ v37：进程首次挂载后 1 分钟补一轮换血，仅一次。进程级标记（非落盘）：
+ *  杀进程重开即重新计时；组件重挂载 / StrictMode 双调用不重复注册。 */
+const COLD_KICK_MS = 60 * 1000
+let coldKickDone = false
 
 const toMCTrack = (tr: SheetTrack): MCTrack => ({
   id: tr.id,
@@ -127,20 +132,40 @@ function Shell({ original }: { original: ReactNode }) {
    *  默认 1 时零写入、零事件、零播放器调用。 */
   useEffect(() => { resetVolumeIfNeeded() }, [])
   /**
-   * ★ v36：单池 10 分钟换血。首个 10 分钟后才跑，冷启
-   *   bootstrap → autoRestock → setTick 链路完全不变。
-   *   后台不跑、回前台不补跑（省内网请求）；换血完成不弹提示、不 setTick，
+   * ★ v37：单池 8 分钟换血 · 前后台一视同仁。
+   *   播放中 / 未播放、前台 / 后台 / 灭屏 / 启动期状态未定，一律按 ROTATE_MS 跑，
+   *   不再读 AppState；系统如何节流、挂起、回收由系统决定，代码层不拦截。
+   *   回前台不补跑（避免一次突发多轮，也符合「一视同仁」）。
+   *   另：冷启挂载后 1 分钟补一轮，仅首次打开触发，与 8 分钟周期并存、不互相替代。
+   *   冷启 bootstrap → autoRestock → setTick 链路完全不变；换血完成不弹提示、不 setTick，
    *   下一次用户切档 / 换一批 / 滑到队尾时 pickFresh 自然读到新池。
-   *   catalog 内部自带串行排队，不会并发。
+   *   catalog 内部自带串行排队（rotateChain），两个定时器撞上也不并发。
    */
   useEffect(() => {
-    const id = setInterval(() => {
-      /** RN 启动期 AppState.currentState 可能为 null（首个事件到达前）；
-       *  null 视作可跑，别把首个 10 分钟轮白跳过。 */
-      if (AppState.currentState && AppState.currentState !== 'active') return
-      void rotateBatch()
-    }, ROTATE_MS)
-    return () => clearInterval(id)
+    const id = setInterval(() => { void rotateBatch() }, ROTATE_MS)
+    let kick: ReturnType<typeof setTimeout> | undefined
+    let retry: ReturnType<typeof setTimeout> | undefined
+    if (!coldKickDone) {
+      kick = setTimeout(() => {
+        coldKickDone = true
+        /** ★ v37 修复：冷启 1 分钟常撞上 bootstrap / autoRestock（restocking 锁），
+         *  rotateCore 会 return 0 静默跳过；只跑一次等于「首次换血」形同虚设。
+         *  有限重试（最多再 3 次 × 30 秒），仍走 rotateBatch 串行链，不绕过锁、不并发。
+         *  中心挂了 / 音源恒同批时 4 轮后自然放弃，与周期轮口径一致，不死链、不弹提示。 */
+        let tries = 0
+        const attempt = () => {
+          void rotateBatch().then(n => {
+            if (n === 0 && tries++ < 3) retry = setTimeout(attempt, 30 * 1000)
+          }).catch(() => {})
+        }
+        attempt()
+      }, COLD_KICK_MS)
+    }
+    return () => {
+      clearInterval(id)
+      if (kick) clearTimeout(kick)
+      if (retry) clearTimeout(retry)
+    }
   }, [])
   const FRIENDLY_SOURCE_ERR = '这首暂时没找到可播音源，换一首试试'
   const friendlyErr = (e: any): string => {
@@ -191,7 +216,7 @@ function Shell({ original }: { original: ReactNode }) {
       setTick(v => v + 1)
       // ★ 十一期「自动补货 + 自动清旧」：冷启灌到 120 能立刻开刷后，
       //   在后台渐进补到 400（每段 restock 内部跑 gc），完成后再 tick 一次刷新三页。
-      //   不阻塞启动、本段不建定时器（★ v36 的 10 分钟换血定时器在上方独立 effect）；与刷歌页队列见底的触发点共用 restocking 锁。
+      //   不阻塞启动、本段不建定时器（★ v37 的 8 分钟换血 + 冷启 1 分钟定时器在上方独立 effect）；与刷歌页队列见底的触发点共用 restocking 锁。
       void autoRestock().then(() => setTick(v => v + 1))
     })
   }, [])
